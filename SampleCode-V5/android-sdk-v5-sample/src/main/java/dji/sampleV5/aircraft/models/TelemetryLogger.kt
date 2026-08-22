@@ -28,6 +28,9 @@ object TelemetryLogger {
     private var location: LocationCoordinate3D? = null
     private var gpsSignal: GPSSignalLevel? = null
     private var batteryPercent: Int? = null
+    // NEW: GPSに依存しない対地高度（超音波センサー）
+    // KeyUltrasonicHeight は Int を返す（単位は要確認: mm の可能性あり）
+    private var ultrasonicHeight: Int? = null
 
     private val listenerId = this
 
@@ -84,6 +87,13 @@ object TelemetryLogger {
             batteryPercent = newValue
             android.util.Log.d("Telemetry", "Battery updated: $newValue")
         }
+
+        // NEW: 超音波高度（GPS不要、屋内でも更新されるはず）
+        val heightKey = KeyTools.createKey(FlightControllerKey.KeyUltrasonicHeight)
+        KeyManager.getInstance().listen(heightKey, listenerId) { _, newValue ->
+            ultrasonicHeight = newValue
+            android.util.Log.d("Telemetry", "UltrasonicHeight updated: $newValue")
+        }
     }
 
     private fun unsubscribeKeys() {
@@ -107,7 +117,9 @@ object TelemetryLogger {
                 val yaw = attitude?.yaw ?: 0.0
                 val lat = location?.latitude ?: 0.0
                 val lng = location?.longitude ?: 0.0
-                val alt = location?.altitude ?: 0.0
+                // CHANGED: location.altitude (GPS依存) ではなく ultrasonicHeight (GPS非依存) を使う
+                // 単位がmm等の場合はここで変換が必要（下のLog出力で単位を確認すること）
+                val alt = (ultrasonicHeight ?: 0) / 100.0
                 val gps = gpsSignal?.name ?: "UNKNOWN"
                 val battery = batteryPercent ?: -1
 
