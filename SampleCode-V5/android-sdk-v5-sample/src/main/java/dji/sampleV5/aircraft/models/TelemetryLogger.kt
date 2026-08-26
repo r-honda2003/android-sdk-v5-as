@@ -6,6 +6,7 @@ import android.os.Looper
 import dji.sdk.keyvalue.key.BatteryKey
 import dji.sdk.keyvalue.key.FlightControllerKey
 import dji.sdk.keyvalue.key.KeyTools
+import dji.sdk.keyvalue.key.RemoteControllerKey
 import dji.sdk.keyvalue.value.common.Attitude
 import dji.sdk.keyvalue.value.common.LocationCoordinate3D
 import dji.sdk.keyvalue.value.common.Velocity3D
@@ -29,8 +30,16 @@ object TelemetryLogger {
     private var gpsSignal: GPSSignalLevel? = null
     private var batteryPercent: Int? = null
     // NEW: GPSに依存しない対地高度（超音波センサー）
-    // KeyUltrasonicHeight は Int を返す（単位は要確認: mm の可能性あり）
+    // KeyUltrasonicHeight は Int を返す。単位はdm(0.1m)であることを較正テストで確認済み
     private var ultrasonicHeight: Int? = null
+
+    // NEW: リモコンのスティック入力（範囲: -660〜660）
+    // 左スティック: 一般的に上下=高度(スロットル)、左右=旋回(ヨー)
+    // 右スティック: 一般的に上下=前後(ピッチ)、左右=左右(ロール)  ※モード設定により対応が変わる場合あり
+    private var stickLeftVertical: Int? = null
+    private var stickLeftHorizontal: Int? = null
+    private var stickRightVertical: Int? = null
+    private var stickRightHorizontal: Int? = null
 
     private val listenerId = this
 
@@ -42,7 +51,7 @@ object TelemetryLogger {
         val fileName = "telemetry_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.csv"
         val file = File(dir, fileName)
         fileWriter = FileWriter(file, true)
-        fileWriter?.appendLine("time,vx,vy,vz,pitch,roll,yaw,lat,lng,alt,gps_signal,battery_percent")
+        fileWriter?.appendLine("time,vx,vy,vz,pitch,roll,yaw,lat,lng,alt,gps_signal,battery_percent,stick_left_v,stick_left_h,stick_right_v,stick_right_h")
 
         subscribeKeys()
         startPeriodicWrite()
@@ -94,6 +103,31 @@ object TelemetryLogger {
             ultrasonicHeight = newValue
             android.util.Log.d("Telemetry", "UltrasonicHeight updated: $newValue")
         }
+
+        // NEW: リモコンのスティック入力（4軸）
+        val stickLeftVKey = KeyTools.createKey(RemoteControllerKey.KeyStickLeftVertical)
+        KeyManager.getInstance().listen(stickLeftVKey, listenerId) { _, newValue ->
+            stickLeftVertical = newValue
+            android.util.Log.d("Telemetry", "StickLeftVertical updated: $newValue")
+        }
+
+        val stickLeftHKey = KeyTools.createKey(RemoteControllerKey.KeyStickLeftHorizontal)
+        KeyManager.getInstance().listen(stickLeftHKey, listenerId) { _, newValue ->
+            stickLeftHorizontal = newValue
+            android.util.Log.d("Telemetry", "StickLeftHorizontal updated: $newValue")
+        }
+
+        val stickRightVKey = KeyTools.createKey(RemoteControllerKey.KeyStickRightVertical)
+        KeyManager.getInstance().listen(stickRightVKey, listenerId) { _, newValue ->
+            stickRightVertical = newValue
+            android.util.Log.d("Telemetry", "StickRightVertical updated: $newValue")
+        }
+
+        val stickRightHKey = KeyTools.createKey(RemoteControllerKey.KeyStickRightHorizontal)
+        KeyManager.getInstance().listen(stickRightHKey, listenerId) { _, newValue ->
+            stickRightHorizontal = newValue
+            android.util.Log.d("Telemetry", "StickRightHorizontal updated: $newValue")
+        }
     }
 
     private fun unsubscribeKeys() {
@@ -118,13 +152,17 @@ object TelemetryLogger {
                 val lat = location?.latitude ?: 0.0
                 val lng = location?.longitude ?: 0.0
                 // CHANGED: location.altitude (GPS依存) ではなく ultrasonicHeight (GPS非依存) を使う
-                // 単位がmm等の場合はここで変換が必要（下のLog出力で単位を確認すること）
-                val alt = (ultrasonicHeight ?: 0) / 100.0
+                // 実測0.5m/1.0m/1.5mでの較正テストにより、単位はdm(0.1m)であることを確認済み(2026/08/22)
+                val alt = (ultrasonicHeight ?: 0) / 10.0
                 val gps = gpsSignal?.name ?: "UNKNOWN"
                 val battery = batteryPercent ?: -1
+                val stickLV = stickLeftVertical ?: 0
+                val stickLH = stickLeftHorizontal ?: 0
+                val stickRV = stickRightVertical ?: 0
+                val stickRH = stickRightHorizontal ?: 0
 
                 fileWriter?.appendLine(
-                    "$now,$vx,$vy,$vz,$pitch,$roll,$yaw,$lat,$lng,$alt,$gps,$battery"
+                    "$now,$vx,$vy,$vz,$pitch,$roll,$yaw,$lat,$lng,$alt,$gps,$battery,$stickLV,$stickLH,$stickRV,$stickRH"
                 )
                 fileWriter?.flush()
 
