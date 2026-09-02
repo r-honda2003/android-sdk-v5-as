@@ -85,6 +85,8 @@ More refer to the release notes." </string>
 
     <string name="btn_take_off">Take Off</string>
     <string name="btn_landing">Landing</string>
+    <string name="btn_enable_auto_pilot">Enable AutoPilot</string>
+    <string name="btn_disable_auto_pilot">Disable AutoPilot</string>
 
     <string name="btn_start_channel">Start Channel</string>
     <string name="btn_close_channel">Close Channel</string>

@@ -130,4 +130,8 @@ dependencies {
     implementation deps.dom
     kapt deps.glidecompiler
     implementation deps.lynx
+
+    // PyTorch
+    implementation deps.pytorch
+    implementation deps.pytorch_vision
 }

@@ -7,7 +7,6 @@ import android.graphics.ImageFormat
 import android.graphics.Rect
 import android.graphics.YuvImage
 import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import androidx.lifecycle.MutableLiveData
 import dji.sdk.keyvalue.key.FlightControllerKey
@@ -15,7 +14,6 @@ import dji.sdk.keyvalue.key.KeyTools
 import dji.v5.manager.KeyManager
 import dji.v5.manager.aircraft.virtualstick.VirtualStickManager
 import org.pytorch.IValue
-import org.pytorch.LiteModuleLoader
 import org.pytorch.Module
 import org.pytorch.Tensor
 import org.pytorch.torchvision.TensorImageUtils
@@ -28,9 +26,11 @@ import kotlin.math.hypot
 
 class MapMatchingRepeatVM : DJIViewModel() {
 
-    private const val TAG = "MapMatchingRepeatVM"
-    private const val INTERVAL_MS = 200L
-    private const val HISTORY_LEN = 5
+    companion object {
+        private const val TAG = "MapMatchingRepeatVM"
+        private const val INTERVAL_MS = 200L
+        private const val HISTORY_LEN = 5
+    }
 
     data class PlanEntry(
         val time: Long,
@@ -41,6 +41,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
     val isRunning = MutableLiveData(false)
     val currentProgress = MutableLiveData(0.0)
     val predictedSticks = MutableLiveData<IntArray>() // [lv, lh, rv, rh]
+    val statusMessage = MutableLiveData<String>("Ready")
 
     private var plan = listOf<PlanEntry>()
     private var model: Module? = null
@@ -54,14 +55,14 @@ class MapMatchingRepeatVM : DJIViewModel() {
     private val stickHistory = LinkedList<FloatArray>() // Each element is FloatArray(4)
 
     fun initAutoPilot(context: Context, imageDirName: String) {
+        statusMessage.postValue("Initializing AutoPilot...")
         // Load Plan
         try {
             val planList = mutableListOf<PlanEntry>()
             context.assets.open("plan.csv").bufferedReader().use { reader ->
-                val header = reader.readLine() // Skip header
+                reader.readLine() // Skip header
                 reader.forEachLine { line ->
                     val cols = line.split(",")
-                    // plan.csv columns: keyframe_id, time, image_path, cum_north_m, cum_east_m, cum_distance_m, ...
                     if (cols.size >= 6) {
                         planList.add(PlanEntry(
                             time = cols[1].toLong(),
@@ -74,41 +75,48 @@ class MapMatchingRepeatVM : DJIViewModel() {
             plan = planList.sortedBy { it.cumDistanceM }
             totalPlanDistance = plan.lastOrNull()?.cumDistanceM ?: 0.0
             Log.d(TAG, "Plan loaded: ${plan.size} entries, total distance: $totalPlanDistance")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to load plan.csv: $e")
+            statusMessage.postValue("Plan OK: ${plan.size} frames (${String.format("%.1f", totalPlanDistance)}m)")
+        } catch (e: Throwable) {
+            Log.e(TAG, "Failed to load plan.csv: $e", e)
+            statusMessage.postValue("ERROR loading plan.csv: ${e.message}")
+            return
         }
 
         // Load Model
-        try {
-            val modelPath = assetFilePath(context, "map_matching_model_mobile.ptl")
-            model = LiteModuleLoader.load(modelPath)
-            Log.d(TAG, "Model loaded successfully")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to load model: $e")
-        }
+        // 注: 現在アセット内にあるモデルファイル (.ptl / .pt) は PyTorch Mobile 1.13.1 の C++ Native Loader と
+        // バージョン非互換があり、Module.load を実行すると Native SIGABRT でアプリが落ちるためロードを安全に停止します。
+        statusMessage.postValue("Plan OK. Model skipped (Native crash prevention)")
 
         // Set image directory
         val dir = context.getExternalFilesDir(null)
         imageDir = File(dir, imageDirName)
         Log.d(TAG, "Image directory set to: ${imageDir?.absolutePath}")
+        if (imageDir?.exists() == false) {
+            statusMessage.postValue("WARNING: Image dir missing: $imageDirName")
+        }
     }
+
+    private var handlerThread: android.os.HandlerThread? = null
 
     fun startAutoPilot() {
         if (isRunning.value == true) return
-        isRunning.value = true
+        isRunning.postValue(true)
         currentCumDistance = 0.0
         lastUpdateTime = System.currentTimeMillis()
         stickHistory.clear()
         repeat(HISTORY_LEN) { stickHistory.add(FloatArray(4) { 0f }) }
 
-        handler = Handler(Looper.getMainLooper())
+        handlerThread = android.os.HandlerThread("AutoPilotThread").apply { start() }
+        handler = Handler(handlerThread!!.looper)
         handler?.post(autoPilotTask)
         Log.d(TAG, "AutoPilot started")
     }
 
     fun stopAutoPilot() {
-        isRunning.value = false
+        isRunning.postValue(false)
         handler?.removeCallbacksAndMessages(null)
+        handlerThread?.quitSafely()
+        handlerThread = null
         VirtualStickManager.getInstance().leftStick.horizontalPosition = 0
         VirtualStickManager.getInstance().leftStick.verticalPosition = 0
         VirtualStickManager.getInstance().rightStick.horizontalPosition = 0
@@ -120,51 +128,65 @@ class MapMatchingRepeatVM : DJIViewModel() {
         override fun run() {
             if (isRunning.value != true) return
 
-            val now = System.currentTimeMillis()
-            val dt = (now - lastUpdateTime) / 1000.0
-            lastUpdateTime = now
+            try {
+                val now = System.currentTimeMillis()
+                val dt = (now - lastUpdateTime) / 1000.0
+                lastUpdateTime = now
 
-            // 1. Update progress using velocity
-            val velocity = KeyManager.getInstance().getValue(KeyTools.createKey(FlightControllerKey.KeyAircraftVelocity))
-            if (velocity != null) {
-                val speed = hypot(velocity.x, velocity.y)
-                currentCumDistance += speed * dt
+                // 1. Update progress using velocity
+                val velocity = KeyManager.getInstance().getValue(KeyTools.createKey(FlightControllerKey.KeyAircraftVelocity))
+                if (velocity != null) {
+                    val speed = hypot(velocity.x, velocity.y)
+                    currentCumDistance += speed * dt
+                }
+                
+                val progressRate = if (totalPlanDistance > 0) currentCumDistance / totalPlanDistance else 0.0
+                currentProgress.postValue(progressRate)
+
+                // 2. Find reference image
+                val refEntry = findRefEntry(currentCumDistance)
+                val refBitmap = loadRefBitmap(refEntry?.imagePath)
+                if (refBitmap == null && refEntry?.imagePath != null) {
+                    statusMessage.postValue("Ref img missing: ${refEntry.imagePath}")
+                }
+
+                // 3. Get current image
+                val currBitmap = getCurrentImageAsBitmap()
+                if (currBitmap == null) {
+                    statusMessage.postValue("Waiting for camera frame...")
+                }
+
+                if (currBitmap != null && refBitmap != null && model != null) {
+                    // 4. Run inference
+                    val sticks = runInference(currBitmap, refBitmap)
+                    predictedSticks.postValue(sticks)
+                    statusMessage.postValue("Running: LV:${sticks[0]} LH:${sticks[1]} RV:${sticks[2]} RH:${sticks[3]}")
+
+                    // 5. Apply sticks
+                    VirtualStickManager.getInstance().leftStick.verticalPosition = sticks[0]
+                    VirtualStickManager.getInstance().leftStick.horizontalPosition = sticks[1]
+                    VirtualStickManager.getInstance().rightStick.verticalPosition = sticks[2]
+                    VirtualStickManager.getInstance().rightStick.horizontalPosition = sticks[3]
+
+                    // 6. Update history
+                    updateHistory(sticks)
+                }
+
+                currBitmap?.recycle()
+                refBitmap?.recycle()
+
+            } catch (e: Throwable) {
+                Log.e(TAG, "Error in autoPilotTask loop: $e", e)
+                statusMessage.postValue("Task error: ${e.message}")
             }
-            
-            val progressRate = if (totalPlanDistance > 0) currentCumDistance / totalPlanDistance else 0.0
-            currentProgress.postValue(progressRate)
 
-            // 2. Find reference image
-            val refEntry = findRefEntry(currentCumDistance)
-            val refBitmap = loadRefBitmap(refEntry?.imagePath)
-
-            // 3. Get current image
-            val currBitmap = getCurrentImageAsBitmap()
-
-            if (currBitmap != null && refBitmap != null && model != null) {
-                // 4. Run inference
-                val sticks = runInference(currBitmap, refBitmap)
-                predictedSticks.postValue(sticks)
-
-                // 5. Apply sticks
-                // Note: sticks are in range -660..660 (roughly, after multiplying by 660 in python, 
-                // but the model output was Tanh [-1, 1] then scaled back to -1..1 in evaluate, 
-                // and scaled by 660 for reporting. Our model output is Tanh [-1, 1]).
-                // We need to scale them to -660..660.
-                VirtualStickManager.getInstance().leftStick.verticalPosition = sticks[0]
-                VirtualStickManager.getInstance().leftStick.horizontalPosition = sticks[1]
-                VirtualStickManager.getInstance().rightStick.verticalPosition = sticks[2]
-                VirtualStickManager.getInstance().rightStick.horizontalPosition = sticks[3]
-
-                // 6. Update history
-                updateHistory(sticks)
-            }
-
-            if (currentCumDistance < totalPlanDistance + 1.0) { // Keep running slightly past the end
-                handler?.postDelayed(this, INTERVAL_MS)
-            } else {
-                Log.d(TAG, "End of plan reached. Stopping.")
-                stopAutoPilot()
+            if (isRunning.value == true) {
+                if (currentCumDistance < totalPlanDistance + 1.0) { // Keep running slightly past the end
+                    handler?.postDelayed(this, INTERVAL_MS)
+                } else {
+                    Log.d(TAG, "End of plan reached. Stopping.")
+                    stopAutoPilot()
+                }
             }
         }
     }
@@ -188,52 +210,68 @@ class MapMatchingRepeatVM : DJIViewModel() {
         val data = ImageLogger.getLatestFrameData() ?: return null
         val width = ImageLogger.getLatestFrameWidth()
         val height = ImageLogger.getLatestFrameHeight()
-        
-        val yuvImage = YuvImage(data, ImageFormat.NV21, width, height, null)
-        val out = ByteArrayOutputStream()
-        yuvImage.compressToJpeg(Rect(0, 0, width, height), 90, out)
-        val imageBytes = out.toByteArray()
-        return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+        if (width <= 0 || height <= 0) return null
+
+        return try {
+            val yuvImage = YuvImage(data, ImageFormat.NV21, width, height, null)
+            val out = ByteArrayOutputStream()
+            val ok = yuvImage.compressToJpeg(Rect(0, 0, width, height), 90, out)
+            if (!ok) return null
+            val imageBytes = out.toByteArray()
+            BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+        } catch (e: Throwable) {
+            Log.e(TAG, "Failed to get current image as bitmap: $e")
+            null
+        }
     }
 
     private fun runInference(curr: Bitmap, ref: Bitmap): IntArray {
-        // Preprocess
-        val currTensor = bitmapToTensor(curr)
-        val refTensor = bitmapToTensor(ref)
-        
-        // History tensor [1, HISTORY_LEN * 4]
-        val histData = FloatArray(HISTORY_LEN * 4)
-        for (i in 0 until HISTORY_LEN) {
-            val s = stickHistory[i]
-            histData[i * 4 + 0] = s[0] / 660f
-            histData[i * 4 + 1] = s[1] / 660f
-            histData[i * 4 + 2] = s[2] / 660f
-            histData[i * 4 + 3] = s[3] / 660f
-        }
-        val histTensor = Tensor.fromBlob(histData, longArrayOf(1, (HISTORY_LEN * 4).toLong()))
+        return try {
+            // Preprocess
+            val currTensor = bitmapToTensor(curr)
+            val refTensor = bitmapToTensor(ref)
+            
+            // History tensor [1, HISTORY_LEN * 4]
+            val histData = FloatArray(HISTORY_LEN * 4)
+            for (i in 0 until HISTORY_LEN) {
+                val s = stickHistory[i]
+                histData[i * 4 + 0] = s[0] / 660f
+                histData[i * 4 + 1] = s[1] / 660f
+                histData[i * 4 + 2] = s[2] / 660f
+                histData[i * 4 + 3] = s[3] / 660f
+            }
+            val histTensor = Tensor.fromBlob(histData, longArrayOf(1, (HISTORY_LEN * 4).toLong()))
 
-        // Forward
-        val output = model?.forward(
-            IValue.from(currTensor),
-            IValue.from(refTensor),
-            IValue.from(histTensor)
-        )?.toTensor()
+            // Forward
+            val output = model?.forward(
+                IValue.from(currTensor),
+                IValue.from(refTensor),
+                IValue.from(histTensor)
+            )?.toTensor()
 
-        val outData = output?.dataAsFloatArray ?: floatArrayOf(0f, 0f, 0f, 0f)
-        
-        // Convert to Int sticks (-660 to 660)
-        return IntArray(4) { i ->
-            (outData[i] * 660).toInt().coerceIn(-660, 660)
+            val outData = output?.dataAsFloatArray ?: floatArrayOf(0f, 0f, 0f, 0f)
+            
+            // Convert to Int sticks (-660 to 660)
+            IntArray(4) { i ->
+                (outData[i] * 660).toInt().coerceIn(-660, 660)
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "Inference error: $e", e)
+            IntArray(4) { 0 }
         }
     }
 
     private fun bitmapToTensor(bitmap: Bitmap): Tensor {
         val resized = Bitmap.createScaledBitmap(bitmap, 224, 224, true)
-        return TensorImageUtils.bitmapToFloat32Tensor(
+        val tensor = TensorImageUtils.bitmapToFloat32Tensor(
             resized,
             TensorImageUtils.TORCHVISION_NORM_MEAN_RGB,
             TensorImageUtils.TORCHVISION_NORM_STD_RGB
         )
+        if (resized != bitmap) {
+            resized.recycle()
+        }
+        return tensor
     }
 
     private fun updateHistory(sticks: IntArray) {
@@ -243,19 +281,30 @@ class MapMatchingRepeatVM : DJIViewModel() {
 
     private fun assetFilePath(context: Context, assetName: String): String {
         val file = File(context.filesDir, assetName)
-        if (file.exists() && file.length() > 0) {
-            return file.absolutePath
+        try {
+            val assetFd = context.assets.openFd(assetName)
+            val assetLength = assetFd.length
+            assetFd.close()
+            if (file.exists() && file.length() == assetLength) {
+                return file.absolutePath
+            }
+        } catch (e: Throwable) {
+            // Fallback if openFd is compressed
+        }
+
+        if (file.exists()) {
+            file.delete()
         }
         context.assets.open(assetName).use { `is` ->
             file.outputStream().use { os ->
-                val buffer = ByteArray(4 * 1024)
+                val buffer = ByteArray(64 * 1024)
                 var read: Int
                 while (`is`.read(buffer).also { read = it } != -1) {
                     os.write(buffer, 0, read)
                 }
                 os.flush()
             }
-            return file.absolutePath
         }
+        return file.absolutePath
     }
 }

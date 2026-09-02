@@ -36,19 +36,18 @@ class VirtualStickVM : DJIViewModel() {
     var stickValue = MutableLiveData(RCStickValue(0, 0, 0, 0))
 
     init {
+        VirtualStickManager.getInstance().init()
         currentSpeedLevel.value = VirtualStickManager.getInstance().speedLevel
         VirtualStickManager.getInstance().setVirtualStickStateListener(object :
             VirtualStickStateListener {
             override fun onVirtualStickStateUpdate(stickState: VirtualStickState) {
-                currentVirtualStickStateInfo.postValue(currentVirtualStickStateInfo.value?.apply {
-                    this.state = stickState
-                })
+                val current = currentVirtualStickStateInfo.value ?: VirtualStickStateInfo()
+                currentVirtualStickStateInfo.postValue(current.copy(state = stickState))
             }
 
             override fun onChangeReasonUpdate(reason: FlightControlAuthorityChangeReason) {
-                currentVirtualStickStateInfo.postValue(currentVirtualStickStateInfo.value?.apply {
-                    this.reason = reason
-                })
+                val current = currentVirtualStickStateInfo.value ?: VirtualStickStateInfo()
+                currentVirtualStickStateInfo.postValue(current.copy(reason = reason))
             }
         })
     }
@@ -128,6 +127,7 @@ class VirtualStickVM : DJIViewModel() {
     override fun onCleared() {
         KeyManager.getInstance().cancelListen(this)
         VirtualStickManager.getInstance().clearAllVirtualStickStateListener()
+        VirtualStickManager.getInstance().destroy()
     }
 
     data class VirtualStickStateInfo(

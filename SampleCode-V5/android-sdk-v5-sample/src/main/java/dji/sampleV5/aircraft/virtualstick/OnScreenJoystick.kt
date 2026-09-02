@@ -163,15 +163,26 @@ class OnScreenJoystick(context: Context?, attrs: AttributeSet) : SurfaceView(con
                 var canvas: Canvas? = null
                 try {
                     canvas = mHolder.lockCanvas(null)
-                    synchronized(mHolder) {
-                        doDraw(canvas)
+                    if (canvas != null) {
+                        synchronized(mHolder) {
+                            doDraw(canvas)
+                        }
                     }
                 } catch (e: Exception) {
                     LogUtils.e(tag, e.message)
                 } finally {
                     if (canvas != null) {
-                        mHolder.unlockCanvasAndPost(canvas)
+                        try {
+                            mHolder.unlockCanvasAndPost(canvas)
+                        } catch (e: Exception) {
+                            LogUtils.e(tag, "unlockCanvasAndPost failed: $e")
+                        }
                     }
+                }
+                try {
+                    sleep(20)
+                } catch (_: InterruptedException) {
+                    // ignore
                 }
             }
         }

@@ -65,12 +65,28 @@
                 app:layout_constraintTop_toBottomOf="@id/btn_take_off" />
 
             <Button
+                android:id="@+id/btn_enable_auto_pilot"
+                style="@style/main_fragment_btn"
+                android:text="@string/btn_enable_auto_pilot"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/btn_landing" />
+
+            <Button
+                android:id="@+id/btn_disable_auto_pilot"
+                style="@style/main_fragment_btn"
+                android:text="@string/btn_disable_auto_pilot"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/btn_enable_auto_pilot" />
+
+            <Button
                 android:id="@+id/btn_use_rc_stick"
                 style="@style/main_fragment_btn"
                 android:text="@string/btn_use_rc_stick_value"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@id/btn_landing" />
+                app:layout_constraintTop_toBottomOf="@id/btn_disable_auto_pilot" />
 
 
             <Button

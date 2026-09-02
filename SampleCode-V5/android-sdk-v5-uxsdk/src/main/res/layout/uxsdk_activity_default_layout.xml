@@ -243,6 +243,48 @@
             app:layout_constraintVertical_bias="0"
             tools:ignore="TouchTargetSizeCheck,SpeakableTextPresentCheck" />
 
+        <!-- Virtual Stick Control Panel for DefaultLayoutActivity -->
+        <LinearLayout
+            android:id="@+id/layout_virtual_stick_control"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_marginTop="8dp"
+            android:orientation="vertical"
+            android:background="#80000000"
+            android:padding="6dp"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@+id/widget_return_to_home">
+
+            <Button
+                android:id="@+id/btn_virtual_stick_toggle"
+                android:layout_width="140dp"
+                android:layout_height="36dp"
+                android:background="#333333"
+                android:textColor="#FFFFFF"
+                android:textSize="10sp"
+                android:text="Virtual Stick: OFF" />
+
+            <Button
+                android:id="@+id/btn_autopilot_toggle"
+                android:layout_width="140dp"
+                android:layout_height="36dp"
+                android:layout_marginTop="4dp"
+                android:background="#333333"
+                android:textColor="#FFFFFF"
+                android:textSize="10sp"
+                android:text="AutoPilot: OFF" />
+
+            <TextView
+                android:id="@+id/tv_vs_status"
+                android:layout_width="140dp"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:textColor="#00FF00"
+                android:textSize="9sp"
+                android:text="VS Status: Idle" />
+        </LinearLayout>
+
         <dji.v5.ux.training.simulatorcontrol.SimulatorControlWidget
             android:id="@+id/widget_simulator_control"
             android:layout_width="330dp"

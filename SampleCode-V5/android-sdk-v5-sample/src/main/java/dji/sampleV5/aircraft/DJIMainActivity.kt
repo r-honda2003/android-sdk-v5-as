@@ -23,6 +23,10 @@ import dji.v5.utils.common.PermissionUtil
 import dji.v5.utils.common.StringUtils
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import dji.sampleV5.aircraft.models.TelemetryLogger
+import dji.sampleV5.aircraft.models.ImageLogger
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Class Description
@@ -142,7 +146,9 @@ abstract class DJIMainActivity : AppCompatActivity() {
                 ToastUtils.showToast("Register Success")
                 statusText = StringUtils.getResStr(this, R.string.registered)
                 msdkInfoVm.initListener()
-                TelemetryLogger.startLogging(this)
+                val sessionId = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+                TelemetryLogger.startLogging(this, sessionId)
+                ImageLogger.startLogging(this, sessionId)
                 handler.postDelayed({
                     prepareUxActivity()
                 }, 5000)
@@ -232,5 +238,6 @@ abstract class DJIMainActivity : AppCompatActivity() {
         handler.removeCallbacksAndMessages(null)
         disposable.dispose()
         TelemetryLogger.stopLogging()
+        ImageLogger.stopLogging()
     }
 }

@@ -14,9 +14,6 @@ import dji.sdk.keyvalue.value.flightcontroller.GPSSignalLevel
 import dji.v5.manager.KeyManager
 import java.io.File
 import java.io.FileWriter
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 object TelemetryLogger {
 
@@ -43,15 +40,15 @@ object TelemetryLogger {
 
     private val listenerId = this
 
-    fun startLogging(context: Context) {
+    fun startLogging(context: Context, sessionId: String) {
         if (isRecording) return
         isRecording = true
 
         val dir = context.getExternalFilesDir(null)
-        val fileName = "telemetry_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())}.csv"
+        val fileName = "telemetry_$sessionId.csv"
         val file = File(dir, fileName)
         fileWriter = FileWriter(file, true)
-        fileWriter?.appendLine("time,vx,vy,vz,pitch,roll,yaw,lat,lng,alt,gps_signal,battery_percent,stick_left_v,stick_left_h,stick_right_v,stick_right_h")
+        fileWriter?.appendLine("time,image_path,vx,vy,vz,pitch,roll,yaw,lat,lng,alt,gps_signal,battery_percent,stick_left_v,stick_left_h,stick_right_v,stick_right_h")
 
         subscribeKeys()
         startPeriodicWrite()
@@ -143,6 +140,9 @@ object TelemetryLogger {
                 if (!isRecording) return
 
                 val now = System.currentTimeMillis()
+                // NEW: この瞬間の最新カメラフレームを、同じタイムスタンプで同時に保存する。
+                // これにより画像とテレメトリの時刻が構造的に一致し、後から同期する必要がなくなる。
+                val imagePath = ImageLogger.saveLatestFrame(now) ?: ""
                 val vx = velocity?.x ?: 0.0
                 val vy = velocity?.y ?: 0.0
                 val vz = velocity?.z ?: 0.0
@@ -162,7 +162,7 @@ object TelemetryLogger {
                 val stickRH = stickRightHorizontal ?: 0
 
                 fileWriter?.appendLine(
-                    "$now,$vx,$vy,$vz,$pitch,$roll,$yaw,$lat,$lng,$alt,$gps,$battery,$stickLV,$stickLH,$stickRV,$stickRH"
+                    "$now,$imagePath,$vx,$vy,$vz,$pitch,$roll,$yaw,$lat,$lng,$alt,$gps,$battery,$stickLV,$stickLH,$stickRV,$stickRH"
                 )
                 fileWriter?.flush()
 

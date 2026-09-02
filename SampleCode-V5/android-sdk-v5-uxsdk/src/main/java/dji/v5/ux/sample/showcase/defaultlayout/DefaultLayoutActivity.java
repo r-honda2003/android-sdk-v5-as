@@ -26,8 +26,23 @@ package dji.v5.ux.sample.showcase.defaultlayout;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.View;
+import android.widget.Button;
 import android.widget.TextView;
+
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.util.Locale;
+
+import dji.v5.manager.aircraft.virtualstick.VirtualStickManager;
+import dji.v5.manager.aircraft.virtualstick.VirtualStickState;
+import dji.v5.manager.aircraft.virtualstick.VirtualStickStateListener;
+import dji.sdk.keyvalue.value.flightcontroller.FlightControlAuthorityChangeReason;
+import dji.v5.common.callback.CommonCallbacks;
+import dji.v5.common.error.IDJIError;
+import dji.v5.ux.core.util.ToastUtils;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -190,6 +205,7 @@ public class DefaultLayoutActivity extends AppCompatActivity {
         //实现RTK监测网络，并自动重连机制
         DJINetworkManager.getInstance().addNetworkStatusListener(networkStatusListener);
 
+        initVirtualStickControls();
     }
 
     private void isGimableAdjustClicked(BroadcastValues broadcastValues) {
@@ -219,27 +235,261 @@ public class DefaultLayoutActivity extends AppCompatActivity {
         if (simulatorIndicatorWidget != null) {
             simulatorIndicatorWidget.setOnClickListener(v -> ViewExtensions.toggleVisibility(simulatorControlWidget));
         }
-        gimbalAdjustDone.setOnClickListener(view -> {
-            horizontalSituationIndicatorWidget.setVisibility(View.VISIBLE);
-            if (gimbalFineTuneWidget != null) {
-                gimbalFineTuneWidget.setVisibility(View.GONE);
-            }
-
-        });
+        if (gimbalAdjustDone != null) {
+            gimbalAdjustDone.setOnClickListener(view -> {
+                horizontalSituationIndicatorWidget.setVisibility(View.VISIBLE);
+                if (gimbalFineTuneWidget != null) {
+                    gimbalFineTuneWidget.setVisibility(View.GONE);
+                }
+            });
+        }
     }
 
     private void toggleRightDrawer() {
         mDrawerLayout.openDrawer(GravityCompat.END);
     }
 
+    protected Button btnVirtualStickToggle;
+    protected Button btnAutoPilotToggle;
+    protected TextView tvVsStatus;
+    protected boolean isVirtualStickEnabled = false;
+
+    protected boolean isAutoPilotRunning = false;
+    protected Handler autoPilotHandler;
+    protected Runnable autoPilotRunnable;
+
+    protected List<PlanEntry> planList = new ArrayList<>();
+    protected int currentPlanIndex = 0;
+
+    protected static class PlanEntry {
+        long time;
+        double cumDistanceM;
+        int stickLeftV;
+        int stickLeftH;
+        int stickRightV;
+        int stickRightH;
+
+        public PlanEntry(long time, double cumDistanceM, int stickLeftV, int stickLeftH, int stickRightV, int stickRightH) {
+            this.time = time;
+            this.cumDistanceM = cumDistanceM;
+            this.stickLeftV = stickLeftV;
+            this.stickLeftH = stickLeftH;
+            this.stickRightV = stickRightV;
+            this.stickRightH = stickRightH;
+        }
+    }
+
+    private void loadPlanCsv() {
+        planList.clear();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(getAssets().open("plan.csv")))) {
+            reader.readLine(); // Skip Header
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String[] cols = line.split(",");
+                if (cols.length >= 14) {
+                    long time = Long.parseLong(cols[1].trim());
+                    double cumDist = Double.parseDouble(cols[5].trim());
+                    int lv = Integer.parseInt(cols[10].trim());
+                    int lh = Integer.parseInt(cols[11].trim());
+                    int rv = Integer.parseInt(cols[12].trim());
+                    int rh = Integer.parseInt(cols[13].trim());
+                    planList.add(new PlanEntry(time, cumDist, lv, lh, rv, rh));
+                }
+            }
+            LogUtils.d(TAG, "Plan CSV loaded successfully: " + planList.size() + " entries.");
+        } catch (Throwable e) {
+            LogUtils.e(TAG, "Failed to load plan.csv: " + e.getMessage());
+        }
+    }
+
+    private void startAutoPilot() {
+        if (!isVirtualStickEnabled) {
+            ToastUtils.INSTANCE.showToast("Please enable Virtual Stick first!");
+            return;
+        }
+
+        if (planList.isEmpty()) {
+            loadPlanCsv();
+        }
+
+        if (planList.isEmpty()) {
+            ToastUtils.INSTANCE.showToast("ERROR: plan.csv not loaded!");
+            return;
+        }
+
+        isAutoPilotRunning = true;
+        currentPlanIndex = 0;
+
+        if (btnAutoPilotToggle != null) {
+            btnAutoPilotToggle.setText("AutoPilot: ON");
+            btnAutoPilotToggle.setBackgroundColor(Color.GREEN);
+        }
+
+        autoPilotHandler = new Handler(Looper.getMainLooper());
+        autoPilotRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (!isAutoPilotRunning || !isVirtualStickEnabled) {
+                    stopAutoPilot();
+                    return;
+                }
+
+                if (currentPlanIndex >= planList.size()) {
+                    ToastUtils.INSTANCE.showToast("Plan AutoPilot Completed!");
+                    stopAutoPilot();
+                    return;
+                }
+
+                PlanEntry entry = planList.get(currentPlanIndex);
+                double progress = ((double) (currentPlanIndex + 1) / planList.size()) * 100.0;
+
+                if (tvVsStatus != null) {
+                    tvVsStatus.setText(String.format("Plan: %d/%d (%.1f%%)\nLV:%d LH:%d RV:%d RH:%d",
+                            currentPlanIndex + 1, planList.size(), progress,
+                            entry.stickLeftV, entry.stickLeftH, entry.stickRightV, entry.stickRightH));
+                }
+
+                try {
+                    VirtualStickManager.getInstance().getLeftStick().setVerticalPosition(entry.stickLeftV);
+                    VirtualStickManager.getInstance().getLeftStick().setHorizontalPosition(entry.stickLeftH);
+                    VirtualStickManager.getInstance().getRightStick().setVerticalPosition(entry.stickRightV);
+                    VirtualStickManager.getInstance().getRightStick().setHorizontalPosition(entry.stickRightH);
+                } catch (Throwable e) {
+                    LogUtils.e(TAG, "AutoPilot stick send error: " + e.getMessage());
+                }
+
+                currentPlanIndex++;
+
+                long delay = 200;
+                if (currentPlanIndex < planList.size()) {
+                    long timeDiff = planList.get(currentPlanIndex).time - entry.time;
+                    if (timeDiff > 50 && timeDiff < 1000) {
+                        delay = timeDiff;
+                    }
+                }
+
+                autoPilotHandler.postDelayed(this, delay);
+            }
+        };
+
+        autoPilotHandler.post(autoPilotRunnable);
+        ToastUtils.INSTANCE.showToast("Plan AutoPilot Started (" + planList.size() + " frames)");
+    }
+
+    private void stopAutoPilot() {
+        isAutoPilotRunning = false;
+        if (autoPilotHandler != null && autoPilotRunnable != null) {
+            autoPilotHandler.removeCallbacks(autoPilotRunnable);
+        }
+
+        // スティック中立(0)リセット
+        try {
+            VirtualStickManager.getInstance().getLeftStick().setVerticalPosition(0);
+            VirtualStickManager.getInstance().getLeftStick().setHorizontalPosition(0);
+            VirtualStickManager.getInstance().getRightStick().setVerticalPosition(0);
+            VirtualStickManager.getInstance().getRightStick().setHorizontalPosition(0);
+        } catch (Throwable e) {
+            // ignore
+        }
+
+        if (btnAutoPilotToggle != null) {
+            btnAutoPilotToggle.setText("AutoPilot: OFF");
+            btnAutoPilotToggle.setBackgroundColor(Color.DKGRAY);
+        }
+        if (tvVsStatus != null) {
+            tvVsStatus.setText(isVirtualStickEnabled ? "VS Status: Enabled" : "VS Status: Disabled");
+        }
+
+        ToastUtils.INSTANCE.showToast("AutoPilot Stopped");
+    }
+
+    private void initVirtualStickControls() {
+        btnVirtualStickToggle = findViewById(R.id.btn_virtual_stick_toggle);
+        btnAutoPilotToggle = findViewById(R.id.btn_autopilot_toggle);
+        tvVsStatus = findViewById(R.id.tv_vs_status);
+
+        if (btnVirtualStickToggle == null) return;
+
+        try {
+            VirtualStickManager.getInstance().init();
+            VirtualStickManager.getInstance().setVirtualStickStateListener(new VirtualStickStateListener() {
+                @Override
+                public void onVirtualStickStateUpdate(@NonNull VirtualStickState stickState) {
+                    isVirtualStickEnabled = stickState.isVirtualStickEnable();
+                    runOnUiThread(() -> {
+                        if (isVirtualStickEnabled) {
+                            btnVirtualStickToggle.setText("Virtual Stick: ON");
+                            btnVirtualStickToggle.setBackgroundColor(Color.GREEN);
+                            if (tvVsStatus != null && !isAutoPilotRunning) tvVsStatus.setText("VS Status: Enabled");
+                        } else {
+                            btnVirtualStickToggle.setText("Virtual Stick: OFF");
+                            btnVirtualStickToggle.setBackgroundColor(Color.DKGRAY);
+                            if (tvVsStatus != null) tvVsStatus.setText("VS Status: Disabled");
+                            if (isAutoPilotRunning) stopAutoPilot();
+                        }
+                    });
+                }
+
+                @Override
+                public void onChangeReasonUpdate(@NonNull FlightControlAuthorityChangeReason reason) {
+                    //
+                }
+            });
+        } catch (Throwable e) {
+            LogUtils.e(TAG, "VirtualStickManager init error: " + e.getMessage());
+        }
+
+        btnVirtualStickToggle.setOnClickListener(v -> {
+            if (!isVirtualStickEnabled) {
+                VirtualStickManager.getInstance().enableVirtualStick(new CommonCallbacks.CompletionCallback() {
+                    @Override
+                    public void onSuccess() {
+                        runOnUiThread(() -> ToastUtils.INSTANCE.showToast("Virtual Stick Enabled"));
+                    }
+
+                    @Override
+                    public void onFailure(@NonNull IDJIError error) {
+                        runOnUiThread(() -> ToastUtils.INSTANCE.showToast("Enable Failed: " + error));
+                    }
+                });
+            } else {
+                VirtualStickManager.getInstance().disableVirtualStick(new CommonCallbacks.CompletionCallback() {
+                    @Override
+                    public void onSuccess() {
+                        runOnUiThread(() -> {
+                            ToastUtils.INSTANCE.showToast("Virtual Stick Disabled");
+                            stopAutoPilot();
+                        });
+                    }
+
+                    @Override
+                    public void onFailure(@NonNull IDJIError error) {
+                        runOnUiThread(() -> ToastUtils.INSTANCE.showToast("Disable Failed: " + error));
+                    }
+                });
+            }
+        });
+
+        if (btnAutoPilotToggle != null) {
+            btnAutoPilotToggle.setOnClickListener(v -> {
+                if (!isAutoPilotRunning) {
+                    startAutoPilot();
+                } else {
+                    stopAutoPilot();
+                }
+            });
+        }
+    }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        stopAutoPilot();
         mapWidget.onDestroy();
         MediaDataCenter.getInstance().getCameraStreamManager().removeAvailableCameraUpdatedListener(availableCameraUpdatedListener);
         DJINetworkManager.getInstance().removeNetworkStatusListener(networkStatusListener);
-
+        VirtualStickManager.getInstance().clearAllVirtualStickStateListener();
+        VirtualStickManager.getInstance().destroy();
     }
 
     @Override

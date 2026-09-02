@@ -10,6 +10,7 @@ import dji.sampleV5.aircraft.keyvalue.KeyValueDialogUtil
 import dji.sampleV5.aircraft.models.BasicAircraftControlVM
 import dji.sampleV5.aircraft.models.SimulatorVM
 import dji.sampleV5.aircraft.models.VirtualStickVM
+import dji.sampleV5.aircraft.models.MapMatchingRepeatVM
 import dji.sampleV5.aircraft.util.Helper
 import dji.v5.ux.core.util.ToastUtils
 import dji.sampleV5.aircraft.virtualstick.OnScreenJoystick
@@ -35,6 +36,7 @@ class VirtualStickFragment : DJIFragment() {
     private val basicAircraftControlVM: BasicAircraftControlVM by activityViewModels()
     private val virtualStickVM: VirtualStickVM by activityViewModels()
     private val simulatorVM: SimulatorVM by activityViewModels()
+    private val autoPilotVM: MapMatchingRepeatVM by activityViewModels()
     private var binding: FragVirtualStickPageBinding? = null
     private val deviation: Double = 0.02
 
@@ -68,33 +70,65 @@ class VirtualStickFragment : DJIFragment() {
         virtualStickVM.virtualStickAdvancedParam.observe(viewLifecycleOwner) {
             updateVirtualStickInfo()
         }
+
+        autoPilotVM.currentProgress.observe(viewLifecycleOwner) {
+            updateVirtualStickInfo()
+        }
+        autoPilotVM.predictedSticks.observe(viewLifecycleOwner) {
+            updateVirtualStickInfo()
+        }
+        autoPilotVM.statusMessage.observe(viewLifecycleOwner) {
+            updateVirtualStickInfo()
+        }
         simulatorVM.simulatorStateSb.observe(viewLifecycleOwner) {
             binding?.simulatorStateInfoTv?.text = it
+        }
+
+        // バックグラウンドで非同期にモデルと地図(plan.csv)を事前読み込み（ボタン押下時のメインスレッド停止を回避）
+        val appContext = requireContext().applicationContext
+        java.util.concurrent.Executors.newSingleThreadExecutor().execute {
+            autoPilotVM.initAutoPilot(appContext, "images_20260831_170818")
         }
     }
 
     private fun initBtnClickListener() {
         binding?.btnEnableVirtualStick?.setOnClickListener {
-            virtualStickVM.enableVirtualStick(object : CommonCallbacks.CompletionCallback {
-                override fun onSuccess() {
-                    ToastUtils.showToast("enableVirtualStick success.")
-                }
+            try {
+                virtualStickVM.enableVirtualStick(object : CommonCallbacks.CompletionCallback {
+                    override fun onSuccess() {
+                        mainHandler.post {
+                            ToastUtils.showToast("enableVirtualStick success.")
+                        }
+                    }
 
-                override fun onFailure(error: IDJIError) {
-                    ToastUtils.showToast("enableVirtualStick error,$error")
-                }
-            })
+                    override fun onFailure(error: IDJIError) {
+                        mainHandler.post {
+                            ToastUtils.showToast("enableVirtualStick error,$error")
+                        }
+                    }
+                })
+            } catch (e: Throwable) {
+                ToastUtils.showToast("Exception: ${e.message}")
+            }
         }
         binding?.btnDisableVirtualStick?.setOnClickListener {
-            virtualStickVM.disableVirtualStick(object : CommonCallbacks.CompletionCallback {
-                override fun onSuccess() {
-                    ToastUtils.showToast("disableVirtualStick success.")
-                }
+            try {
+                virtualStickVM.disableVirtualStick(object : CommonCallbacks.CompletionCallback {
+                    override fun onSuccess() {
+                        mainHandler.post {
+                            ToastUtils.showToast("disableVirtualStick success.")
+                        }
+                    }
 
-                override fun onFailure(error: IDJIError) {
-                    ToastUtils.showToast("disableVirtualStick error,${error})")
-                }
-            })
+                    override fun onFailure(error: IDJIError) {
+                        mainHandler.post {
+                            ToastUtils.showToast("disableVirtualStick error,$error")
+                        }
+                    }
+                })
+            } catch (e: Throwable) {
+                ToastUtils.showToast("Exception: ${e.message}")
+            }
         }
         binding?.btnSetVirtualStickSpeedLevel?.setOnClickListener {
             val speedLevels = doubleArrayOf(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)
@@ -126,6 +160,16 @@ class VirtualStickFragment : DJIFragment() {
                     ToastUtils.showToast("start landing onFailure,$error")
                 }
             })
+        }
+
+        binding?.btnEnableAutoPilot?.setOnClickListener {
+            autoPilotVM.startAutoPilot()
+            ToastUtils.showToast("AutoPilot Enabled")
+        }
+
+        binding?.btnDisableAutoPilot?.setOnClickListener {
+            autoPilotVM.stopAutoPilot()
+            ToastUtils.showToast("AutoPilot Disabled")
         }
         binding?.btnUseRcStick?.setOnClickListener {
             virtualStickVM.useRcStick.value = virtualStickVM.useRcStick.value != true
@@ -223,6 +267,17 @@ class VirtualStickFragment : DJIFragment() {
         builder.append("\n")
         builder.append("Virtual stick advanced mode param:").append(virtualStickVM.virtualStickAdvancedParam.value?.toJson())
         builder.append("\n")
+
+        builder.append("AutoPilot Status:").append(autoPilotVM.statusMessage.value)
+        builder.append("\n")
+        builder.append("AutoPilot Running:").append(autoPilotVM.isRunning.value)
+        builder.append("\n")
+        builder.append("AutoPilot Progress:").append(String.format(java.util.Locale.US, "%.1f%%", (autoPilotVM.currentProgress.value ?: 0.0) * 100))
+        builder.append("\n")
+        val sticks = autoPilotVM.predictedSticks.value
+        if (sticks != null && sticks.size == 4) {
+            builder.append("AutoPilot Sticks: LV:${sticks[0]} LH:${sticks[1]} RV:${sticks[2]} RH:${sticks[3]}")
+        }
         mainHandler.post {
             binding?.virtualStickInfoTv?.text = builder.toString()
         }
