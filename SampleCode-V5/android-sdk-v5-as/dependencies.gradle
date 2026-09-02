@@ -91,4 +91,8 @@ ext {
     deps.aspectj_tools = 'org.aspectj:aspectjtools:1.9.6'
     deps.aspectj_rt = 'org.aspectj:aspectjrt:1.9.6'
     deps.aspectj_weaver = 'org.aspectj:aspectjweaver:1.9.6'
+
+    // PyTorch Mobile
+    deps.pytorch = 'org.pytorch:pytorch_android:1.13.1'
+    deps.pytorch_vision = 'org.pytorch:pytorch_android_torchvision:1.13.1'
 }
