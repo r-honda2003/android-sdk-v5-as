@@ -1,17 +1,8 @@
 """
 train_map_matching.py
 
-マップ照合（基準フレームとのペア）を用いた Teach & Repeat モデルを学習する。
+自作 2D-CNN (Drone2DCNN) + マップ照合を用いた Teach & Repeat モデルを学習する。
 「今のカメラ画像」+「進捗が対応する基準フレーム(Map)の画像」+「スティック履歴」から「スティック4軸」を予測する。
-
-設計:
-- match_sessions.py で作成した matched_telemetry.csv を使用する (ref_image_path列を含む)。
-- モデルは今の画像と基準画像の2つを入力とし、それぞれの特徴量を MobileNetV2 で抽出して結合する。
-- スティック履歴も同様に結合して回帰ヘッドに渡す。
-
-使い方:
-    python train_map_matching.py --telemetry matched_telemetry.csv --images_dir images_20260827_184612 \
-        --output_model map_matching_model.pt --epochs 20 --val_session_id 5 --history_len 5
 """
 
 import argparse
@@ -23,7 +14,6 @@ import torch.nn as nn
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
-from torchvision.models import mobilenet_v2, MobileNet_V2_Weights
 
 STICK_MAX = 660.0
 STICK_COLS = ["stick_left_v", "stick_left_h", "stick_right_v", "stick_right_h"]
@@ -90,33 +80,71 @@ class MapMatchingDataset(Dataset):
         return image, ref_image, history, target
 
 
-class MapMatchingPolicy(nn.Module):
-    def __init__(self, history_len: int, freeze_backbone: bool = True):
+# =========================================================
+# 1. 自作 2D-CNN 特徴抽出クラス (Drone2DCNN)
+# =========================================================
+class Drone2DCNN(nn.Module):
+    def __init__(self, output_feature_dim=1280):
         super().__init__()
-        weights = MobileNet_V2_Weights.IMAGENET1K_V2
-        backbone = mobilenet_v2(weights=weights)
-        self.features = backbone.features
-        if freeze_backbone:
-            for p in self.features.parameters():
-                p.requires_grad = False
 
-        self.pool = nn.AdaptiveAvgPool2d(1)
-        self.flatten = nn.Flatten()
+        self.features = nn.Sequential(
+            # 第1ブロック: 基本的な線や色合いを検出 (224x224 -> 112x112)
+            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
 
-        history_dim = history_len * len(STICK_COLS)
-        # 1280 (curr_img) + 1280 (ref_img) + history_dim
+            # 第2ブロック: 形状の検出 (112x112 -> 56x56)
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+
+            # 第3ブロック: 物体パーツの検出 (56x56 -> 28x28)
+            nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+
+            # 第4ブロック: 高次特徴の検出 (28x28 -> 14x14)
+            nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+        )
+
+        self.pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(256, output_feature_dim)
+
+    def forward(self, x):
+        x = self.features(x)
+        x = self.pool(x)
+        x = torch.flatten(x, start_dim=1)
+        feat = self.fc(x)
+        return feat
+
+
+# =========================================================
+# 2. E2E 全体モデル (自作 2D-CNN 搭載)
+# =========================================================
+class MapMatchingPolicy(nn.Module):
+    def __init__(self, history_len: int = 5):
+        super().__init__()
+
+        # バックボーンを自作 2D-CNN に設定
+        self.backbone = Drone2DCNN(output_feature_dim=1280)
+
+        history_dim = history_len * len(STICK_COLS) # 20次元
+
+        # 1280 (curr_img) + 1280 (ref_img) + 20 (history)
         self.head = nn.Sequential(
             nn.Linear(1280 * 2 + history_dim, 256),
             nn.ReLU(inplace=True),
             nn.Dropout(0.3),
-            nn.Linear(256, 4),
+            nn.Linear(256, 4),  # 出力: 4軸
             nn.Tanh(),
         )
 
     def forward(self, x, ref_x, history):
-        # 両方の画像から特徴抽出 (重みは共有)
-        feat = self.flatten(self.pool(self.features(x)))
-        ref_feat = self.flatten(self.pool(self.features(ref_x)))
+        # 自作 2D-CNN で特徴抽出
+        feat = self.backbone(x)
+        ref_feat = self.backbone(ref_x)
 
         combined = torch.cat([feat, ref_feat, history], dim=1)
         return self.head(combined)
@@ -156,8 +184,8 @@ def main():
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = MapMatchingPolicy(history_len=args.history_len, freeze_backbone=True).to(device)
-    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr)
+    model = MapMatchingPolicy(history_len=args.history_len).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     criterion = nn.MSELoss()
 
     for epoch in range(1, args.epochs + 1):
@@ -186,7 +214,7 @@ def main():
         print(f"epoch {epoch:3d}/{args.epochs}  train_loss={train_loss:.5f}  val_loss={val_loss:.5f}")
 
     torch.save({"state_dict": model.state_dict(), "history_len": args.history_len}, args.output_model)
-    print(f"\nモデルを保存しました: {args.output_model}")
+    print(f"\n自作2D-CNNモデルを保存しました: {args.output_model}")
 
 
 if __name__ == "__main__":

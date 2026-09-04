@@ -82,10 +82,21 @@ class MapMatchingRepeatVM : DJIViewModel() {
             return
         }
 
-        // Load Model
-        // 注: 現在アセット内にあるモデルファイル (.ptl / .pt) は PyTorch Mobile 1.13.1 の C++ Native Loader と
-        // バージョン非互換があり、Module.load を実行すると Native SIGABRT でアプリが落ちるためロードを安全に停止します。
-        statusMessage.postValue("Plan OK. Model skipped (Native crash prevention)")
+        // Load Custom 2D-CNN Model
+        try {
+            val modelPath = assetFilePath(context, "map_matching_model_mobile.ptl")
+            val modelFile = File(modelPath)
+            if (modelFile.exists() && modelFile.length() > 0L) {
+                model = Module.load(modelPath)
+                Log.d(TAG, "Custom 2D-CNN model loaded successfully: $modelPath")
+                statusMessage.postValue("Custom 2D-CNN Model Loaded. Ready!")
+            } else {
+                statusMessage.postValue("ERROR: map_matching_model_mobile.ptl missing")
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "Failed to load custom 2D-CNN model: $e", e)
+            statusMessage.postValue("ERROR loading model: ${e.message}")
+        }
 
         // Set image directory
         val dir = context.getExternalFilesDir(null)
