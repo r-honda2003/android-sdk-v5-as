@@ -12,7 +12,7 @@ def main():
 
     # 1. モデル構造の定義と学習済み重みのロード
     model = MapMatchingPolicy(history_len=5)
-    checkpoint = torch.load("map_matching_model.pt", map_location="cpu")
+    checkpoint = torch.load("map_matching_model_new.pt", map_location="cpu")
     model.load_state_dict(checkpoint["state_dict"])
     model.eval()
 

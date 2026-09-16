@@ -45,10 +45,13 @@ android {
     }
 
     packagingOptions {
-        // 因为mrtc库内部使用了NDK的c++_shared的编译参数
-        // 与其他库重复引用了，因此选其中一个即可
-        pickFirst 'lib/arm64-v8a/libc++_shared.so'
-        pickFirst 'lib/armeabi-v7a/libc++_shared.so'
+        // 因为mrtc库内部使用了NDKのc++_sharedの编译参数
+        // 与其他库重複引用了，因此選其中一個即可
+        pickFirst '**/libc++_shared.so'
+
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 
     compileOptions {
@@ -134,4 +137,7 @@ dependencies {
     // PyTorch
     implementation deps.pytorch
     implementation deps.pytorch_vision
+
+    // OpenCV (Local Module)
+    implementation project(':opencv')
 }

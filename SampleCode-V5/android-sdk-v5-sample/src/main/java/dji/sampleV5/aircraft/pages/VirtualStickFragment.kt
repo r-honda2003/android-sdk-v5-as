@@ -11,6 +11,7 @@ import dji.sampleV5.aircraft.models.BasicAircraftControlVM
 import dji.sampleV5.aircraft.models.SimulatorVM
 import dji.sampleV5.aircraft.models.VirtualStickVM
 import dji.sampleV5.aircraft.models.MapMatchingRepeatVM
+import dji.sampleV5.aircraft.models.OrbMapMatchingVM
 import dji.sampleV5.aircraft.util.Helper
 import dji.v5.ux.core.util.ToastUtils
 import dji.sampleV5.aircraft.virtualstick.OnScreenJoystick
@@ -37,6 +38,7 @@ class VirtualStickFragment : DJIFragment() {
     private val virtualStickVM: VirtualStickVM by activityViewModels()
     private val simulatorVM: SimulatorVM by activityViewModels()
     private val autoPilotVM: MapMatchingRepeatVM by activityViewModels()
+    private val orbAutoPilotVM: OrbMapMatchingVM by activityViewModels()
     private var binding: FragVirtualStickPageBinding? = null
     private val deviation: Double = 0.02
 
@@ -87,7 +89,8 @@ class VirtualStickFragment : DJIFragment() {
         // バックグラウンドで非同期にモデルと地図(plan.csv)を事前読み込み（ボタン押下時のメインスレッド停止を回避）
         val appContext = requireContext().applicationContext
         java.util.concurrent.Executors.newSingleThreadExecutor().execute {
-            autoPilotVM.initAutoPilot(appContext, "images_20260831_170818")
+            autoPilotVM.initAutoPilot(appContext, "images_20260914_130134")
+            orbAutoPilotVM.initAutoPilot(appContext, "images_20260914_130134")
         }
     }
 
@@ -163,14 +166,23 @@ class VirtualStickFragment : DJIFragment() {
         }
 
         binding?.btnEnableAutoPilot?.setOnClickListener {
+            ToastUtils.showToast("Starting AutoPilot (AI Mode)")
             autoPilotVM.startAutoPilot()
-            ToastUtils.showToast("AutoPilot Enabled")
         }
 
         binding?.btnDisableAutoPilot?.setOnClickListener {
             autoPilotVM.stopAutoPilot()
+            orbAutoPilotVM.stopAutoPilot()
             ToastUtils.showToast("AutoPilot Disabled")
         }
+
+        // --- ORB AutoPilot Button (via Long Click for testing) ---
+        binding?.btnSetVirtualStickAdvancedParam?.setOnLongClickListener {
+            ToastUtils.showToast("Starting ORB AutoPilot")
+            orbAutoPilotVM.startAutoPilot()
+            true
+        }
+
         binding?.btnUseRcStick?.setOnClickListener {
             virtualStickVM.useRcStick.value = virtualStickVM.useRcStick.value != true
             if (virtualStickVM.useRcStick.value == true) {
@@ -278,6 +290,9 @@ class VirtualStickFragment : DJIFragment() {
         if (sticks != null && sticks.size == 4) {
             builder.append("AutoPilot Sticks: LV:${sticks[0]} LH:${sticks[1]} RV:${sticks[2]} RH:${sticks[3]}")
         }
+        builder.append("\n")
+        builder.append("ORB Status:").append(orbAutoPilotVM.statusMessage.value)
+        
         mainHandler.post {
             binding?.virtualStickInfoTv?.text = builder.toString()
         }

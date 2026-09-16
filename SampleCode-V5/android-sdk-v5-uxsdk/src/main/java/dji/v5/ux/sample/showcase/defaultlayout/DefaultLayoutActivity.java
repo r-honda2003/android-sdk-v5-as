@@ -23,6 +23,7 @@
 
 package dji.v5.ux.sample.showcase.defaultlayout;
 
+import android.content.Context;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Bundle;
@@ -35,6 +36,11 @@ import android.widget.TextView;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.util.Locale;
+
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import dji.v5.manager.datacenter.MediaDataCenter;
+import dji.v5.manager.interfaces.ICameraStreamManager;
 
 import dji.v5.manager.aircraft.virtualstick.VirtualStickManager;
 import dji.v5.manager.aircraft.virtualstick.VirtualStickState;
@@ -55,6 +61,9 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.constraintlayout.widget.ConstraintLayout;
 import androidx.core.view.GravityCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
+import androidx.lifecycle.ViewModel;
+import androidx.lifecycle.ViewModelProvider;
+
 import dji.sdk.keyvalue.value.common.CameraLensType;
 import dji.sdk.keyvalue.value.common.ComponentIndexType;
 import dji.v5.manager.datacenter.MediaDataCenter;
@@ -255,8 +264,13 @@ public class DefaultLayoutActivity extends AppCompatActivity {
     protected boolean isVirtualStickEnabled = false;
 
     protected boolean isAutoPilotRunning = false;
+    protected boolean useOrbMode = false; // false: AI (2D-CNN), true: ORB
     protected Handler autoPilotHandler;
     protected Runnable autoPilotRunnable;
+
+    protected Button btnSwitchPilotMode;
+    protected Object orbAutoPilotVM; // Using Object to avoid direct compile-time dependency
+    private static final String ORB_VM_CLASS = "dji.sampleV5.aircraft.models.OrbMapMatchingVM";
 
     protected List<PlanEntry> planList = new ArrayList<>();
     protected int currentPlanIndex = 0;
@@ -305,6 +319,11 @@ public class DefaultLayoutActivity extends AppCompatActivity {
     private void startAutoPilot() {
         if (!isVirtualStickEnabled) {
             ToastUtils.INSTANCE.showToast("Please enable Virtual Stick first!");
+            return;
+        }
+
+        if (useOrbMode) {
+            startOrbAutoPilot();
             return;
         }
 
@@ -376,10 +395,50 @@ public class DefaultLayoutActivity extends AppCompatActivity {
         ToastUtils.INSTANCE.showToast("Plan AutoPilot Started (" + planList.size() + " frames)");
     }
 
+    private void startOrbAutoPilot() {
+        try {
+            // Using reflection to call sample module's OrbMapMatchingVM
+            ViewModelProvider provider = new ViewModelProvider(this);
+            Class<?> vmClass = Class.forName(ORB_VM_CLASS);
+            Object vmInstance = provider.get((Class<ViewModel>) vmClass);
+            
+            // Initialize
+            vmClass.getMethod("initAutoPilot", Context.class, String.class)
+                .invoke(vmInstance, getApplicationContext(), "images_20260914_130134");
+
+            isAutoPilotRunning = true;
+            if (btnAutoPilotToggle != null) {
+                btnAutoPilotToggle.setText("AutoPilot: ON");
+                btnAutoPilotToggle.setBackgroundColor(Color.BLUE);
+            }
+            if (tvVsStatus != null) {
+                tvVsStatus.setText("VS Status: ORB Active");
+            }
+
+            vmClass.getMethod("startAutoPilot").invoke(vmInstance);
+            ToastUtils.INSTANCE.showToast("ORB AutoPilot Started");
+
+        } catch (Throwable e) {
+            LogUtils.e(TAG, "Failed to start ORB: " + e.getMessage());
+            ToastUtils.INSTANCE.showToast("ORB Start Error: " + e.getMessage());
+        }
+    }
+
     private void stopAutoPilot() {
         isAutoPilotRunning = false;
         if (autoPilotHandler != null && autoPilotRunnable != null) {
             autoPilotHandler.removeCallbacks(autoPilotRunnable);
+        }
+
+        if (useOrbMode) {
+            try {
+                ViewModelProvider provider = new ViewModelProvider(this);
+                Class<?> vmClass = Class.forName(ORB_VM_CLASS);
+                Object vmInstance = provider.get((Class<ViewModel>) vmClass);
+                vmClass.getMethod("stopAutoPilot").invoke(vmInstance);
+            } catch (Throwable e) {
+                // ignore
+            }
         }
 
         // スティック中立(0)リセット
@@ -477,6 +536,21 @@ public class DefaultLayoutActivity extends AppCompatActivity {
                 } else {
                     stopAutoPilot();
                 }
+            });
+        }
+
+        btnSwitchPilotMode = findViewById(R.id.btn_switch_pilot_mode);
+        if (btnSwitchPilotMode != null) {
+            btnSwitchPilotMode.setOnClickListener(v -> {
+                useOrbMode = !useOrbMode;
+                if (useOrbMode) {
+                    btnSwitchPilotMode.setText("Mode: ORB (Geometric)");
+                    btnSwitchPilotMode.setBackgroundColor(Color.BLUE);
+                } else {
+                    btnSwitchPilotMode.setText("Mode: AI (2D-CNN)");
+                    btnSwitchPilotMode.setBackgroundColor(Color.rgb(85, 85, 85)); // 555555
+                }
+                ToastUtils.INSTANCE.showToast("Switched to " + (useOrbMode ? "ORB" : "AI") + " Mode");
             });
         }
     }
