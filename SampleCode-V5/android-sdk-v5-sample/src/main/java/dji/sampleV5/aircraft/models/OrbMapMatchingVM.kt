@@ -12,6 +12,11 @@ import android.util.Log
 import androidx.lifecycle.MutableLiveData
 import dji.sdk.keyvalue.key.FlightControllerKey
 import dji.sdk.keyvalue.key.KeyTools
+import dji.sdk.keyvalue.value.flightcontroller.FlightCoordinateSystem
+import dji.sdk.keyvalue.value.flightcontroller.RollPitchControlMode
+import dji.sdk.keyvalue.value.flightcontroller.VerticalControlMode
+import dji.sdk.keyvalue.value.flightcontroller.VirtualStickFlightControlParam
+import dji.sdk.keyvalue.value.flightcontroller.YawControlMode
 import dji.v5.manager.KeyManager
 import dji.v5.manager.aircraft.virtualstick.VirtualStickManager
 import org.opencv.android.OpenCVLoader
@@ -34,7 +39,7 @@ class OrbMapMatchingVM : DJIViewModel() {
         
         // Control Gains (Tune these)
         private const val ROLL_GAIN = 0.5f 
-        private const val PITCH_SPEED = 100 // Constant forward speed for TaR
+        private const val PITCH_SPEED = 150 // Increased for positive initial movement
     }
 
     data class PlanEntry(
@@ -109,6 +114,24 @@ class OrbMapMatchingVM : DJIViewModel() {
 
     fun startAutoPilot() {
         if (isRunning.value == true) return
+
+        // 1. Set Virtual Stick Parameters & Speed Level (Crucial for MSDK V5)
+        try {
+            val vsm = VirtualStickManager.getInstance()
+            vsm.init()
+            vsm.setSpeedLevel(0.5) // Set to 50% speed for safety
+            vsm.setVirtualStickAdvancedModeEnabled(true)
+
+            val param = VirtualStickFlightControlParam()
+            param.rollPitchCoordinateSystem = FlightCoordinateSystem.BODY
+            param.verticalControlMode = VerticalControlMode.VELOCITY
+            param.yawControlMode = YawControlMode.ANGULAR_VELOCITY
+            param.rollPitchControlMode = RollPitchControlMode.ANGLE
+            vsm.sendVirtualStickAdvancedParam(param)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to setup VSM: $e")
+        }
+
         isRunning.postValue(true)
         currentCumDistance = 0.0
         lastUpdateTime = System.currentTimeMillis()
@@ -167,6 +190,9 @@ class OrbMapMatchingVM : DJIViewModel() {
                     VirtualStickManager.getInstance().leftStick.horizontalPosition = sticks.yaw
                     
                     statusMessage.postValue("ORB Run: R:${sticks.roll} P:${sticks.pitch}")
+                } else {
+                    if (currBitmap == null) statusMessage.postValue("Wait: No Camera Frame")
+                    if (refBitmap == null) statusMessage.postValue("Wait: No Ref Image")
                 }
 
                 currBitmap?.recycle()

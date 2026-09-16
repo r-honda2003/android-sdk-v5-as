@@ -61,6 +61,7 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.constraintlayout.widget.ConstraintLayout;
 import androidx.core.view.GravityCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
+import androidx.lifecycle.LiveData;
 import androidx.lifecycle.ViewModel;
 import androidx.lifecycle.ViewModelProvider;
 
@@ -405,6 +406,18 @@ public class DefaultLayoutActivity extends AppCompatActivity {
             // Initialize
             vmClass.getMethod("initAutoPilot", Context.class, String.class)
                 .invoke(vmInstance, getApplicationContext(), "images_20260914_130134");
+
+            // Observe status message from ORB VM
+            try {
+                LiveData<String> statusLiveData = (LiveData<String>) vmClass.getMethod("getStatusMessage").invoke(vmInstance);
+                statusLiveData.observe(this, msg -> {
+                    if (tvVsStatus != null && isAutoPilotRunning && useOrbMode) {
+                        tvVsStatus.setText("ORB: " + msg);
+                    }
+                });
+            } catch (Exception e) {
+                LogUtils.e(TAG, "Failed to observe ORB status: " + e.getMessage());
+            }
 
             isAutoPilotRunning = true;
             if (btnAutoPilotToggle != null) {
