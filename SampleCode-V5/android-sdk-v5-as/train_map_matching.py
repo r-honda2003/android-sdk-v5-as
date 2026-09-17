@@ -133,7 +133,13 @@ def load_dataset_df(telemetry_path: str, history_len: int) -> pd.DataFrame:
 def main():
     args = parse_args()
     df = load_dataset_df(args.telemetry, args.history_len)
-    print(f"有効サンプル数: {len(df)}")
+
+    # 画像ファイルが存在しない行を自動で除外する
+    import os
+    initial_len = len(df)
+    df = df[df.apply(lambda r: os.path.exists(os.path.join(args.images_dir, str(r["image_path"]))) and
+                               os.path.exists(os.path.join(args.images_dir, str(r["ref_image_path"]))), axis=1)].reset_index(drop=True)
+    print(f"有効サンプル数: {len(df)} (存在しない画像があったため {initial_len - len(df)} 件の行を除外しました)")
 
     available_sessions = sorted(df["session_id"].unique())
     val_session_id = args.val_session_id

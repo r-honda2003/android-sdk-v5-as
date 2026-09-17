@@ -1,0 +1,12 @@
+セッションの自動分割（Teach５回分を１つずつの動画にわける）
+python3 split_sessions.py --telemetry telemetry_20260916_165738_AprilTag.csv --output telemetry_with_sessions_AprilTag.csv
+
+基準セッションとのマッチング
+python3 match_sessions.py --telemetry telemetry_with_sessions_AprilTag.csv --ref_session_id 1 --output matched_telemetry_AprilTag.csv
+
+モデルの学習開始
+python3 train_map_matching.py --telemetry matched_telemetry_AprilTag.csv --images_dir images_20260916_165738_AprilTag --output_model map_matching_model_AprilTag.pt --epochs 20 --val_session_id 5 --history_len 5
+
+
+マップ照合なしのベースラインモデルも学習する場合
+python3 train_baseline.py --telemetry telemetry_with_sessions_AprilTag.csv --images_dir images_20260916_165738_AprilTag --output_model baseline_model_AprilTag.pt --epochs 20 --val_session_id 5 --history_len 5
