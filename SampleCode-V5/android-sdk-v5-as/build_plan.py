@@ -119,6 +119,30 @@ def build_plan(df: pd.DataFrame, interval_ms: int, stall_speed_mps: float, trail
     plan = pd.DataFrame(keyframe_rows).reset_index(drop=True)
     plan.insert(0, "keyframe_id", range(len(plan)))
 
+    # 4. Yaw 角度の初期相対化 ＆ 移動平均フィルタ (手ブレ・カクつきの自動平滑化)
+    if "yaw" in plan.columns and len(plan) > 0:
+        raw_yaws = plan["yaw"].to_numpy()
+        start_yaw = raw_yaws[0]
+
+        # スタート時の向きを 0° とした相対角度に補正
+        rel_yaws = []
+        for y in raw_yaws:
+            diff = y - start_yaw
+            while diff > 180.0: diff -= 360.0
+            while diff < -180.0: diff += 360.0
+            rel_yaws.append(diff)
+
+        # 移動平均フィルタ (5コマ平滑化) で手動操縦のブレを滑らかな曲線に変換
+        smooth_yaws = []
+        window = 5
+        for i in range(len(rel_yaws)):
+            start_i = max(0, i - window // 2)
+            end_i = min(len(rel_yaws), i + window // 2 + 1)
+            avg_yaw = sum(rel_yaws[start_i:end_i]) / (end_i - start_i)
+            smooth_yaws.append(avg_yaw)
+
+        plan["yaw"] = smooth_yaws
+
     cols = [
         "keyframe_id", "time", "image_path",
         "cum_north_m", "cum_east_m", "cum_distance_m",

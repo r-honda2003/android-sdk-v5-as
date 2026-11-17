@@ -194,7 +194,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 val pitchVal = if (rawSticks[2] > 50) (rawSticks[2] / 660.0) * 16.0 else 14.0
                 val finalRV = pitchVal.toInt().coerceIn(12, 16)
 
-                // 6. 旋回Yaw角度フィードバック制御
+                // 6. 旋回Yaw角度フィードバック制御 (スタート直後3秒間はまっすぐ前進優先)
                 val attitude = KeyManager.getInstance().getValue(KeyTools.createKey(FlightControllerKey.KeyAircraftAttitude))
                 val currentYaw = attitude?.yaw ?: 0.0
                 val targetYaw = currentYaw
@@ -203,11 +203,14 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 while (yawErr < -180.0) yawErr += 360.0
 
                 val absYawErr = Math.abs(yawErr)
-                val finalLH = when {
+                val calculatedLH = when {
                     absYawErr < 3.0 -> 0
                     absYawErr < 15.0 -> (if (yawErr > 0) 1 else -1) * 15
                     else -> (if (yawErr > 0) 1 else -1) * 35
                 }
+
+                // スタート初期 (Frame 15コマ / 約3秒) は回転せずにまっすぐ前進を最優先！
+                val finalLH = if (currentFrameIndex < 15) 0 else calculatedLH
 
                 predictedSticks.postValue(rawSticks)
                 statusMessage.postValue(
