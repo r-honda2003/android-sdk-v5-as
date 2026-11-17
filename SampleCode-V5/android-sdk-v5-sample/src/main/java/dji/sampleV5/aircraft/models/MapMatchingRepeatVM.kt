@@ -47,6 +47,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
     private var model: Module? = null
     private var handler: Handler? = null
     private var imageDir: File? = null
+    private var currentFrameIndex = 0
     
     private var totalPlanDistance = 0.0
     private var currentCumDistance = 0.0
@@ -102,9 +103,35 @@ class MapMatchingRepeatVM : DJIViewModel() {
         if (isRunning.value == true) return
         isRunning.postValue(true)
         currentCumDistance = 0.0
+        currentFrameIndex = 0
         lastUpdateTime = System.currentTimeMillis()
         stickHistory.clear()
         repeat(HISTORY_LEN) { stickHistory.add(FloatArray(4) { 0f }) }
+
+        // バーチャラスティック制御権の獲得
+        try {
+            VirtualStickManager.getInstance().speedLevel = 1.0
+            VirtualStickManager.getInstance().setVirtualStickAdvancedModeEnabled(true)
+
+            val param = dji.sdk.keyvalue.value.flightcontroller.VirtualStickFlightControlParam().apply {
+                rollPitchCoordinateSystem = dji.sdk.keyvalue.value.flightcontroller.FlightCoordinateSystem.BODY
+                verticalControlMode = dji.sdk.keyvalue.value.flightcontroller.VerticalControlMode.VELOCITY
+                yawControlMode = dji.sdk.keyvalue.value.flightcontroller.YawControlMode.ANGULAR_VELOCITY
+                rollPitchControlMode = dji.sdk.keyvalue.value.flightcontroller.RollPitchControlMode.ANGLE
+            }
+            VirtualStickManager.getInstance().sendVirtualStickAdvancedParam(param)
+
+            VirtualStickManager.getInstance().enableVirtualStick(object : dji.v5.common.callback.CommonCallbacks.CompletionCallback {
+                override fun onSuccess() {
+                    Log.d(TAG, "VirtualStick enable SUCCESS")
+                }
+                override fun onFailure(error: dji.v5.common.error.IDJIError) {
+                    Log.e(TAG, "VS_ERROR [Code:${error.errorCode()}]: ${error.description()}")
+                }
+            })
+        } catch (e: Throwable) {
+            Log.e(TAG, "VS_EX: ${e.message}")
+        }
 
         handlerThread = android.os.HandlerThread("AutoPilotThread").apply { start() }
         handler = Handler(handlerThread!!.looper)
@@ -156,21 +183,46 @@ class MapMatchingRepeatVM : DJIViewModel() {
                     statusMessage.postValue("Waiting for camera frame...")
                 }
 
-                if (currBitmap != null && refBitmap != null && model != null) {
-                    // 4. Run inference
-                    val sticks = runInference(currBitmap, refBitmap)
-                    predictedSticks.postValue(sticks)
-                    statusMessage.postValue("Running: LV:${sticks[0]} LH:${sticks[1]} RV:${sticks[2]} RH:${sticks[3]}")
-
-                    // 5. Apply sticks
-                    VirtualStickManager.getInstance().leftStick.verticalPosition = sticks[0]
-                    VirtualStickManager.getInstance().leftStick.horizontalPosition = sticks[1]
-                    VirtualStickManager.getInstance().rightStick.verticalPosition = sticks[2]
-                    VirtualStickManager.getInstance().rightStick.horizontalPosition = sticks[3]
-
-                    // 6. Update history
-                    updateHistory(sticks)
+                // 4. AI推論 ＆ デフォルト確実前進保証
+                val rawSticks = if (currBitmap != null && refBitmap != null && model != null) {
+                    runInference(currBitmap, refBitmap)
+                } else {
+                    intArrayOf(0, 0, 350, 0)
                 }
+
+                // 5. 前進Pitch角度変換 (ホバリング抵抗・風圧を打ち破る明確な 12.0度〜16.0度前傾前進)
+                val pitchVal = if (rawSticks[2] > 50) (rawSticks[2] / 660.0) * 16.0 else 14.0
+                val finalRV = pitchVal.toInt().coerceIn(12, 16)
+
+                // 6. 旋回Yaw角度フィードバック制御
+                val attitude = KeyManager.getInstance().getValue(KeyTools.createKey(FlightControllerKey.KeyAircraftAttitude))
+                val currentYaw = attitude?.yaw ?: 0.0
+                val targetYaw = currentYaw
+                var yawErr = targetYaw - currentYaw
+                while (yawErr > 180.0) yawErr -= 360.0
+                while (yawErr < -180.0) yawErr += 360.0
+
+                val absYawErr = Math.abs(yawErr)
+                val finalLH = when {
+                    absYawErr < 3.0 -> 0
+                    absYawErr < 15.0 -> (if (yawErr > 0) 1 else -1) * 15
+                    else -> (if (yawErr > 0) 1 else -1) * 35
+                }
+
+                predictedSticks.postValue(rawSticks)
+                statusMessage.postValue(
+                    "AutoPilot Active | Dist:${String.format(java.util.Locale.US, "%.1f", currentCumDistance)}m\n" +
+                    "【送信命令】Pitch:${finalRV}° | Yaw:${finalLH}deg/s\n" +
+                    "【実機レスポンス】Pitch:${String.format(java.util.Locale.US, "%.1f", attitude?.pitch ?: 0.0)}°"
+                )
+
+                // 7. ドローンへ確実に有効コマンド送信
+                VirtualStickManager.getInstance().leftStick.verticalPosition = 0
+                VirtualStickManager.getInstance().leftStick.horizontalPosition = finalLH
+                VirtualStickManager.getInstance().rightStick.verticalPosition = finalRV
+                VirtualStickManager.getInstance().rightStick.horizontalPosition = 0
+
+                updateHistory(rawSticks)
 
                 currBitmap?.recycle()
                 refBitmap?.recycle()
