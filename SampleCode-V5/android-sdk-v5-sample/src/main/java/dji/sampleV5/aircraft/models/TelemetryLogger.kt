@@ -44,11 +44,27 @@ object TelemetryLogger {
         if (isRecording) return
         isRecording = true
 
-        val dir = context.getExternalFilesDir(null)
+        val dateFolderStr = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date())
+        val baseDir = context.getExternalFilesDir(null) ?: File("/sdcard/Android/data/com.dji.sampleV5.aircraft/files")
+        val dateDir = File(baseDir, dateFolderStr)
+        if (!dateDir.exists()) dateDir.mkdirs()
+
         val fileName = "telemetry_$sessionId.csv"
-        val file = File(dir, fileName)
+        val file = File(dateDir, fileName)
         fileWriter = FileWriter(file, true)
-        fileWriter?.appendLine("time,image_path,vx,vy,vz,pitch,roll,yaw,lat,lng,alt,gps_signal,battery_percent,stick_left_v,stick_left_h,stick_right_v,stick_right_h")
+        fileWriter?.appendLine("time,image_path,vx,vy,vz,pitch,roll,yaw,lat,lng,alt,gps_signal,battery_percent,stick_left_v,stick_left_h,stick_right_v,stick_right_h,process_time_ms")
+
+        // TXT Summary File
+        val txtFile = File(dateDir, "telemetry_$sessionId.txt")
+        try {
+            FileWriter(txtFile, false).use { writer ->
+                writer.write("=== Telemetry Run Summary ===\n")
+                writer.write("Date: $dateFolderStr\n")
+                writer.write("SessionID: $sessionId\n")
+            }
+        } catch (e: Exception) {
+            // Ignore txt write error if any
+        }
 
         subscribeKeys()
         startPeriodicWrite()
@@ -139,6 +155,8 @@ object TelemetryLogger {
             override fun run() {
                 if (!isRecording) return
 
+                val startTimeNano = System.nanoTime()
+
                 val now = System.currentTimeMillis()
                 // NEW: この瞬間の最新カメラフレームを、同じタイムスタンプで同時に保存する。
                 // これにより画像とテレメトリの時刻が構造的に一致し、後から同期する必要がなくなる。
@@ -161,8 +179,11 @@ object TelemetryLogger {
                 val stickRV = stickRightVertical ?: 0
                 val stickRH = stickRightHorizontal ?: 0
 
+                // この1サイクル（フレーム保存〜データ整理）の処理時間を計算（ミリ秒単位・小数点以下2桁）
+                val processTimeMs = String.format(java.util.Locale.US, "%.2f", (System.nanoTime() - startTimeNano) / 1_000_000.0)
+
                 fileWriter?.appendLine(
-                    "$now,$imagePath,$vx,$vy,$vz,$pitch,$roll,$yaw,$lat,$lng,$alt,$gps,$battery,$stickLV,$stickLH,$stickRV,$stickRH"
+                    "$now,$imagePath,$vx,$vy,$vz,$pitch,$roll,$yaw,$lat,$lng,$alt,$gps,$battery,$stickLV,$stickLH,$stickRV,$stickRH,$processTimeMs"
                 )
                 fileWriter?.flush()
 

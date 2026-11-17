@@ -21,6 +21,10 @@ android {
         }
     }
 
+    aaptOptions {
+        noCompress "pt", "ptl"
+    }
+
     //配置签名信息
     signingConfigs {
         release {
@@ -103,6 +107,10 @@ android {
 }
 
 dependencies {
+    // PyTorch Mobile (DJI MSDKより上に配置してC++例外ハンドリングの安定性を確保)
+    implementation deps.pytorch
+    implementation deps.pytorch_vision
+
     /** <-----------------依赖MSDK--------------------> **/
     compileOnly deps.aircraftProvided
     implementation deps.aircraft
@@ -130,8 +138,4 @@ dependencies {
     implementation deps.dom
     kapt deps.glidecompiler
     implementation deps.lynx
-
-    // PyTorch
-    implementation deps.pytorch
-    implementation deps.pytorch_vision
 }

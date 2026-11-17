@@ -84,10 +84,22 @@ class VirtualStickFragment : DJIFragment() {
             binding?.simulatorStateInfoTv?.text = it
         }
 
-        // バックグラウンドで非同期にモデルと地図(plan.csv)を事前読み込み（ボタン押下時のメインスレッド停止を回避）
-        val appContext = requireContext().applicationContext
-        java.util.concurrent.Executors.newSingleThreadExecutor().execute {
-            autoPilotVM.initAutoPilot(appContext, "images_20260831_170818")
+        // バックグラウンドで非同期にモデルと地図(plan.csv)を事前読み込み（TestingToolsActivity下の安全例外保護）
+        try {
+            val safeContext = context?.applicationContext ?: dji.v5.utils.common.ContextUtil.getContext()
+            if (safeContext != null) {
+                java.util.concurrent.Executors.newSingleThreadExecutor().execute {
+                    try {
+                        autoPilotVM.initAutoPilot(safeContext, "images_test1")
+                    } catch (e: Throwable) {
+                        mainHandler.post {
+                            ToastUtils.showToast("Init Error: ${e.message}")
+                        }
+                    }
+                }
+            }
+        } catch (e: Throwable) {
+            ToastUtils.showToast("Context Error: ${e.message}")
         }
     }
 
@@ -133,7 +145,10 @@ class VirtualStickFragment : DJIFragment() {
         binding?.btnSetVirtualStickSpeedLevel?.setOnClickListener {
             val speedLevels = doubleArrayOf(0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)
             initPopupNumberPicker(Helper.makeList(speedLevels)) {
-                virtualStickVM.setSpeedLevel(speedLevels[indexChosen[0]])
+                val chosenSpeed = speedLevels[indexChosen[0]]
+                virtualStickVM.setSpeedLevel(chosenSpeed)
+                autoPilotVM.setRepeatSpeedScale(chosenSpeed)
+                ToastUtils.showToast("Repeat Speed set to ${(chosenSpeed * 100).toInt()}%")
                 resetIndex()
             }
         }
@@ -163,13 +178,34 @@ class VirtualStickFragment : DJIFragment() {
         }
 
         binding?.btnEnableAutoPilot?.setOnClickListener {
-            autoPilotVM.startAutoPilot()
-            ToastUtils.showToast("AutoPilot Enabled")
+            try {
+                // 自動で VirtualStick 制御権を獲得してから AutoPilot を起動（一発全自動）
+                virtualStickVM.enableVirtualStick(object : CommonCallbacks.CompletionCallback {
+                    override fun onSuccess() {
+                        mainHandler.post {
+                            autoPilotVM.startAutoPilot()
+                            ToastUtils.showToast("AutoPilot Started & VirtualStick ON")
+                        }
+                    }
+
+                    override fun onFailure(error: IDJIError) {
+                        mainHandler.post {
+                            ToastUtils.showToast("Enable VirtualStick Failed: $error")
+                        }
+                    }
+                })
+            } catch (e: Throwable) {
+                ToastUtils.showToast("AutoPilot Error: ${e.message}")
+            }
         }
 
         binding?.btnDisableAutoPilot?.setOnClickListener {
-            autoPilotVM.stopAutoPilot()
-            ToastUtils.showToast("AutoPilot Disabled")
+            try {
+                autoPilotVM.stopAutoPilot()
+                ToastUtils.showToast("AutoPilot Disabled")
+            } catch (e: Throwable) {
+                ToastUtils.showToast("AutoPilot Stop Error: ${e.message}")
+            }
         }
         binding?.btnUseRcStick?.setOnClickListener {
             virtualStickVM.useRcStick.value = virtualStickVM.useRcStick.value != true
@@ -251,33 +287,21 @@ class VirtualStickFragment : DJIFragment() {
 
     private fun updateVirtualStickInfo() {
         val builder = StringBuilder()
-        builder.append("Speed level:").append(virtualStickVM.currentSpeedLevel.value)
-        builder.append("\n")
-        builder.append("Use rc stick as virtual stick:").append(virtualStickVM.useRcStick.value)
-        builder.append("\n")
-        builder.append("Is virtual stick enable:").append(virtualStickVM.currentVirtualStickStateInfo.value?.state?.isVirtualStickEnable)
-        builder.append("\n")
-        builder.append("Current control permission owner:").append(virtualStickVM.currentVirtualStickStateInfo.value?.state?.currentFlightControlAuthorityOwner)
-        builder.append("\n")
-        builder.append("Change reason:").append(virtualStickVM.currentVirtualStickStateInfo.value?.reason)
-        builder.append("\n")
-        builder.append("Rc stick value:").append(virtualStickVM.stickValue.value?.toString())
-        builder.append("\n")
-        builder.append("Is virtual stick advanced mode enable:").append(virtualStickVM.currentVirtualStickStateInfo.value?.state?.isVirtualStickAdvancedModeEnabled)
-        builder.append("\n")
-        builder.append("Virtual stick advanced mode param:").append(virtualStickVM.virtualStickAdvancedParam.value?.toJson())
-        builder.append("\n")
-
-        builder.append("AutoPilot Status:").append(autoPilotVM.statusMessage.value)
-        builder.append("\n")
-        builder.append("AutoPilot Running:").append(autoPilotVM.isRunning.value)
-        builder.append("\n")
-        builder.append("AutoPilot Progress:").append(String.format(java.util.Locale.US, "%.1f%%", (autoPilotVM.currentProgress.value ?: 0.0) * 100))
-        builder.append("\n")
+        builder.append("=== AutoPilot Monitor ===").append("\n")
+        builder.append("Status: ").append(autoPilotVM.statusMessage.value ?: "Ready").append("\n")
+        builder.append("Progress: ").append(String.format(java.util.Locale.US, "%.1f%%", (autoPilotVM.currentProgress.value ?: 0.0) * 100)).append("\n")
         val sticks = autoPilotVM.predictedSticks.value
         if (sticks != null && sticks.size == 4) {
-            builder.append("AutoPilot Sticks: LV:${sticks[0]} LH:${sticks[1]} RV:${sticks[2]} RH:${sticks[3]}")
+            builder.append("Predicted Sticks: LV:${sticks[0]} LH:${sticks[1]} RV:${sticks[2]} RH:${sticks[3]}").append("\n")
         }
+        builder.append("\n=== VirtualStick System ===\n")
+        builder.append("Speed level:").append(virtualStickVM.currentSpeedLevel.value).append("\n")
+        builder.append("Use rc stick as virtual stick:").append(virtualStickVM.useRcStick.value).append("\n")
+        builder.append("Is virtual stick enable:").append(virtualStickVM.currentVirtualStickStateInfo.value?.state?.isVirtualStickEnable).append("\n")
+        builder.append("Current control permission owner:").append(virtualStickVM.currentVirtualStickStateInfo.value?.state?.currentFlightControlAuthorityOwner).append("\n")
+        builder.append("Change reason:").append(virtualStickVM.currentVirtualStickStateInfo.value?.reason).append("\n")
+        builder.append("Rc stick value:").append(virtualStickVM.stickValue.value?.toString()).append("\n")
+
         mainHandler.post {
             binding?.virtualStickInfoTv?.text = builder.toString()
         }
