@@ -117,7 +117,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 rollPitchCoordinateSystem = dji.sdk.keyvalue.value.flightcontroller.FlightCoordinateSystem.BODY
                 verticalControlMode = dji.sdk.keyvalue.value.flightcontroller.VerticalControlMode.VELOCITY
                 yawControlMode = dji.sdk.keyvalue.value.flightcontroller.YawControlMode.ANGULAR_VELOCITY
-                rollPitchControlMode = dji.sdk.keyvalue.value.flightcontroller.RollPitchControlMode.ANGLE
+                rollPitchControlMode = dji.sdk.keyvalue.value.flightcontroller.RollPitchControlMode.VELOCITY // ★ 速度制御モード (m/s)
             }
             VirtualStickManager.getInstance().sendVirtualStickAdvancedParam(param)
 
@@ -190,9 +190,9 @@ class MapMatchingRepeatVM : DJIViewModel() {
                     intArrayOf(0, 0, 350, 0)
                 }
 
-                // 5. 前進Pitch角度変換 (ホバリング抵抗・風圧を打ち破る明確な 12.0度〜16.0度前傾前進)
-                val pitchVal = if (rawSticks[2] > 50) (rawSticks[2] / 660.0) * 16.0 else 14.0
-                val finalRV = pitchVal.toInt().coerceIn(12, 16)
+                // 5. 前進速度変換 (VELOCITYモード: 秒速 0.3m/s ＝ 30)
+                val pitchInput = if (rawSticks[2] > 50) (rawSticks[2] / 660.0) * 0.4 else 0.3
+                val finalRV = (pitchInput * 100).toInt().coerceIn(20, 40) // 毎秒 0.2m〜0.4m (約0.3m/sノロノロ安全走行)
 
                 // 6. 旋回Yaw角度フィードバック制御 (スタート直後3秒間はまっすぐ前進優先)
                 val attitude = KeyManager.getInstance().getValue(KeyTools.createKey(FlightControllerKey.KeyAircraftAttitude))
@@ -215,7 +215,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 predictedSticks.postValue(rawSticks)
                 statusMessage.postValue(
                     "AutoPilot Active | Dist:${String.format(java.util.Locale.US, "%.1f", currentCumDistance)}m\n" +
-                    "【送信命令】Pitch:${finalRV}° | Yaw:${finalLH}deg/s\n" +
+                    "【送信命令】Speed:${String.format(java.util.Locale.US, "%.2f", finalRV / 100.0)}m/s | Yaw:${finalLH}deg/s\n" +
                     "【実機レスポンス】Pitch:${String.format(java.util.Locale.US, "%.1f", attitude?.pitch ?: 0.0)}°"
                 )
 
