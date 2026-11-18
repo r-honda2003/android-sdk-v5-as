@@ -38,17 +38,23 @@ object TelemetryLogger {
     private var stickRightVertical: Int? = null
     private var stickRightHorizontal: Int? = null
 
+    private var lastYaw: Double? = null
+    private var lastTimestamp: Long? = null
+
     private val listenerId = this
 
     fun startLogging(context: Context, sessionId: String) {
         if (isRecording) return
         isRecording = true
 
+        lastYaw = null
+        lastTimestamp = null
+
         val dir = context.getExternalFilesDir(null)
         val fileName = "telemetry_$sessionId.csv"
         val file = File(dir, fileName)
         fileWriter = FileWriter(file, true)
-        fileWriter?.appendLine("time,image_path,vx,vy,vz,pitch,roll,yaw,lat,lng,alt,gps_signal,battery_percent,stick_left_v,stick_left_h,stick_right_v,stick_right_h")
+        fileWriter?.appendLine("time,image_path,vx,vy,vz,pitch,roll,yaw,lat,lng,alt,gps_signal,battery_percent,stick_left_v,stick_left_h,stick_right_v,stick_right_h,calc_stick_left_v,calc_stick_left_h,calc_stick_right_v,calc_stick_right_h")
 
         subscribeKeys()
         startPeriodicWrite()
@@ -161,8 +167,39 @@ object TelemetryLogger {
                 val stickRV = stickRightVertical ?: 0
                 val stickRH = stickRightHorizontal ?: 0
 
+                // C~H (vx, vy, vz, pitch, roll, yaw) から -660~660 の制御量を計算
+                val maxVz = 3.0
+                val maxVxy = 5.0
+                val maxYawRate = 25.6
+
+                // 1. calc_stick_left_v (スロットル/昇降): 上昇速度は -vz (NED座標系)
+                val calcStickLV = ((-vz / maxVz) * 660.0).toInt().coerceIn(-660, 660)
+
+                // 2. calc_stick_left_h (ヨー/旋回): yaw変化率から算出
+                var calcStickLH = 0
+                val prevY = lastYaw
+                val prevT = lastTimestamp
+                if (prevY != null && prevT != null) {
+                    val dt = (now - prevT) / 1000.0
+                    if (dt > 0.001) {
+                        var dYaw = yaw - prevY
+                        while (dYaw > 180.0) dYaw -= 360.0
+                        while (dYaw < -180.0) dYaw += 360.0
+                        val yawRate = dYaw / dt
+                        calcStickLH = ((yawRate / maxYawRate) * 660.0).toInt().coerceIn(-660, 660)
+                    }
+                }
+                lastYaw = yaw
+                lastTimestamp = now
+
+                // 3. calc_stick_right_v (ピッチ/前後): 北方向速度 vx から算出
+                val calcStickRV = ((vx / maxVxy) * 660.0).toInt().coerceIn(-660, 660)
+
+                // 4. calc_stick_right_h (ロール/左右): 東方向速度 vy から算出
+                val calcStickRH = ((vy / maxVxy) * 660.0).toInt().coerceIn(-660, 660)
+
                 fileWriter?.appendLine(
-                    "$now,$imagePath,$vx,$vy,$vz,$pitch,$roll,$yaw,$lat,$lng,$alt,$gps,$battery,$stickLV,$stickLH,$stickRV,$stickRH"
+                    "$now,$imagePath,$vx,$vy,$vz,$pitch,$roll,$yaw,$lat,$lng,$alt,$gps,$battery,$stickLV,$stickLH,$stickRV,$stickRH,$calcStickLV,$calcStickLH,$calcStickRV,$calcStickRH"
                 )
                 fileWriter?.flush()
 
