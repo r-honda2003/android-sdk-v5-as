@@ -54,7 +54,7 @@ object TelemetryLogger {
         val fileName = "telemetry_$sessionId.csv"
         val file = File(dir, fileName)
         fileWriter = FileWriter(file, true)
-        fileWriter?.appendLine("time,image_path,vx,vy,vz,pitch,roll,yaw,lat,lng,alt,gps_signal,battery_percent,stick_left_v,stick_left_h,stick_right_v,stick_right_h,calc_stick_left_v,calc_stick_left_h,calc_stick_right_v,calc_stick_right_h")
+        fileWriter?.appendLine("time,image_path,vx,vy,vz,pitch,roll,yaw,lat,lng,alt,gps_signal,battery_percent,stick_left_v,stick_left_h,stick_right_v,stick_right_h,calc_stick_left_v,calc_stick_left_h,calc_stick_right_v,calc_stick_right_h,send_stick_left_v,send_stick_left_h,send_stick_right_v,send_stick_right_h")
 
         subscribeKeys()
         startPeriodicWrite()
@@ -198,8 +198,14 @@ object TelemetryLogger {
                 // 4. calc_stick_right_h (ロール/左右): 東方向速度 vy から算出
                 val calcStickRH = ((vy / maxVxy) * 660.0).toInt().coerceIn(-660, 660)
 
+                // 5. V~Y列 (send_stick_*): ドローンへ実際に送信される制御値 (-660~660)
+                val sendStickLV = if (stickLV != 0) stickLV else calcStickLV
+                val sendStickLH = if (stickLH != 0) stickLH else calcStickLH
+                val sendStickRV = if (stickRV != 0) stickRV else calcStickRV
+                val sendStickRH = if (stickRH != 0) stickRH else calcStickRH
+
                 fileWriter?.appendLine(
-                    "$now,$imagePath,$vx,$vy,$vz,$pitch,$roll,$yaw,$lat,$lng,$alt,$gps,$battery,$stickLV,$stickLH,$stickRV,$stickRH,$calcStickLV,$calcStickLH,$calcStickRV,$calcStickRH"
+                    "$now,$imagePath,$vx,$vy,$vz,$pitch,$roll,$yaw,$lat,$lng,$alt,$gps,$battery,$stickLV,$stickLH,$stickRV,$stickRH,$calcStickLV,$calcStickLH,$calcStickRV,$calcStickRH,$sendStickLV,$sendStickLH,$sendStickRV,$sendStickRH"
                 )
                 fileWriter?.flush()
 

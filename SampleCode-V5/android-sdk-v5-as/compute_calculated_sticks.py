@@ -1,13 +1,19 @@
 """
 compute_calculated_sticks.py
 
-既存の telemetry CSV ファイル（A~Q列）から、C~H列（vx, vy, vz, pitch, roll, yaw, time）を使って
-逆算したスティック制御量（-660 ~ +660）を計算し、R~U列として追加・保存します。
+既存の telemetry CSV ファイルから、C~H列（vx, vy, vz, pitch, roll, yaw, time）を使って
+逆算したスティック制御量（-660 ~ +660）を計算し、R~U列 (calc_stick_*) および
+V~Y列 (send_stick_*) として追加・保存します。
 
 R列: calc_stick_left_v  (スロットル / 上昇・下降)
 S列: calc_stick_left_h  (ヨー / 左右旋回)
 T列: calc_stick_right_v (ピッチ / 前進・後進)
 U列: calc_stick_right_h (ロール / 左右移動)
+
+V列: send_stick_left_v  (ドローン送信用制御値 -660~660: スロットル)
+W列: send_stick_left_h  (ドローン送信用制御値 -660~660: ヨー)
+X列: send_stick_right_v (ドローン送信用制御値 -660~660: ピッチ)
+Y列: send_stick_right_h (ドローン送信用制御値 -660~660: ロール)
 
 使い方:
     python3 compute_calculated_sticks.py --input telemetry.csv --output telemetry_with_calc.csv
@@ -64,6 +70,18 @@ def calculate_stick_columns(df: pd.DataFrame, max_vz=3.0, max_vxy=5.0, max_yaw_r
     else:
         df['calc_stick_right_h'] = 0
 
+    # 5. V~Y列: send_stick_* (ドローン送信直前の制御値 -660 ~ 660)
+    for v_col, s_col, c_col in [
+        ('send_stick_left_v', 'stick_left_v', 'calc_stick_left_v'),
+        ('send_stick_left_h', 'stick_left_h', 'calc_stick_left_h'),
+        ('send_stick_right_v', 'stick_right_v', 'calc_stick_right_v'),
+        ('send_stick_right_h', 'stick_right_h', 'calc_stick_right_h'),
+    ]:
+        if s_col in df.columns and not (df[s_col] == 0).all():
+            df[v_col] = df[s_col]
+        else:
+            df[v_col] = df[c_col]
+
     return df
 
 
@@ -77,7 +95,7 @@ def main():
     df_calc = calculate_stick_columns(df, args.max_vz, args.max_vxy, args.max_yaw_rate)
 
     df_calc.to_csv(output_path, index=False)
-    print(f"R~U列 (calc_stick_left_v, calc_stick_left_h, calc_stick_right_v, calc_stick_right_h) を追加しました！")
+    print(f"R~U列 (calc_stick_*) および V~Y列 (send_stick_*) を追加しました！")
     print(f"出力ファイル: '{output_path}'")
 
 

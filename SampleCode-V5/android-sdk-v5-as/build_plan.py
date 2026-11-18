@@ -143,17 +143,19 @@ def build_plan(df: pd.DataFrame, interval_ms: int, stall_speed_mps: float, trail
 
         plan["yaw"] = smooth_yaws
 
-    # スティック列が0でcalc_stick_*列が存在する場合、自動でcalc_stick_*を採用
+    # スティック列が0でsend_stick_*列またはcalc_stick_*列が存在する場合、自動で採用
     stick_map = {
-        "stick_left_v": "calc_stick_left_v",
-        "stick_left_h": "calc_stick_left_h",
-        "stick_right_v": "calc_stick_right_v",
-        "stick_right_h": "calc_stick_right_h",
+        "stick_left_v": ["send_stick_left_v", "calc_stick_left_v"],
+        "stick_left_h": ["send_stick_left_h", "calc_stick_left_h"],
+        "stick_right_v": ["send_stick_right_v", "calc_stick_right_v"],
+        "stick_right_h": ["send_stick_right_h", "calc_stick_right_h"],
     }
-    for orig, calc in stick_map.items():
-        if calc in plan.columns:
-            if orig not in plan.columns or (plan[orig] == 0).all():
-                plan[orig] = plan[calc]
+    for orig, candidates in stick_map.items():
+        if orig not in plan.columns or (plan[orig] == 0).all():
+            for cand in candidates:
+                if cand in plan.columns and not (plan[cand] == 0).all():
+                    plan[orig] = plan[cand]
+                    break
 
     cols = [
         "keyframe_id", "time", "image_path",
@@ -161,6 +163,7 @@ def build_plan(df: pd.DataFrame, interval_ms: int, stall_speed_mps: float, trail
         "alt", "pitch", "roll", "yaw",
         "stick_left_v", "stick_left_h", "stick_right_v", "stick_right_h",
         "calc_stick_left_v", "calc_stick_left_h", "calc_stick_right_v", "calc_stick_right_h",
+        "send_stick_left_v", "send_stick_left_h", "send_stick_right_v", "send_stick_right_h",
     ]
     plan = plan[[c for c in cols if c in plan.columns]]
     return plan
