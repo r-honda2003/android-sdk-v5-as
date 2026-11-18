@@ -55,8 +55,13 @@ class MapMatchingRepeatVM : DJIViewModel() {
     
     private val stickHistory = LinkedList<FloatArray>() // Each element is FloatArray(4)
 
+    private var logFileDir: File? = null
+    private var logFileWriter: java.io.FileWriter? = null
+    private var lastInferenceTimeMs: Long = 0L
+
     fun initAutoPilot(context: Context, imageDirName: String) {
         statusMessage.postValue("Initializing AutoPilot...")
+        logFileDir = context.getExternalFilesDir(null)
         // Load Plan
         try {
             val planList = mutableListOf<PlanEntry>()
@@ -108,6 +113,19 @@ class MapMatchingRepeatVM : DJIViewModel() {
         stickHistory.clear()
         repeat(HISTORY_LEN) { stickHistory.add(FloatArray(4) { 0f }) }
 
+        // CSVログファイルの初期化
+        try {
+            val sessionId = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
+            val logFile = File(logFileDir, "autopilot_exec_$sessionId.csv")
+            logFileWriter = java.io.FileWriter(logFile, true).apply {
+                appendLine("timestamp,cum_distance_m,pred_lv,pred_lh,pred_rv,pred_rh,send_lv,send_lh,send_rv,send_rh,inference_time_ms,total_loop_time_ms,ref_image_path,pitch,roll,yaw")
+                flush()
+            }
+            Log.d(TAG, "AutoPilot CSV logger started: ${logFile.absolutePath}")
+        } catch (e: Throwable) {
+            Log.e(TAG, "Failed to start CSV logger: $e", e)
+        }
+
         // バーチャラスティック制御権の獲得
         try {
             VirtualStickManager.getInstance().speedLevel = 1.0
@@ -140,6 +158,16 @@ class MapMatchingRepeatVM : DJIViewModel() {
         VirtualStickManager.getInstance().leftStick.verticalPosition = 0
         VirtualStickManager.getInstance().rightStick.horizontalPosition = 0
         VirtualStickManager.getInstance().rightStick.verticalPosition = 0
+
+        try {
+            logFileWriter?.flush()
+            logFileWriter?.close()
+            logFileWriter = null
+            Log.d(TAG, "AutoPilot CSV logger stopped")
+        } catch (e: Throwable) {
+            Log.e(TAG, "Failed to close CSV logger: $e", e)
+        }
+
         Log.d(TAG, "AutoPilot stopped")
     }
 
@@ -147,6 +175,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
         override fun run() {
             if (isRunning.value != true) return
 
+            val loopStartTime = System.currentTimeMillis()
             try {
                 val now = System.currentTimeMillis()
                 val dt = (now - lastUpdateTime) / 1000.0
@@ -179,6 +208,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 val rawSticks = if (currBitmap != null && refBitmap != null && model != null) {
                     runInference(currBitmap, refBitmap)
                 } else {
+                    lastInferenceTimeMs = 0L
                     intArrayOf(0, 0, 350, 0)
                 }
 
@@ -193,9 +223,12 @@ class MapMatchingRepeatVM : DJIViewModel() {
 
                 predictedSticks.postValue(rawSticks)
                 val attitude = KeyManager.getInstance().getValue(KeyTools.createKey(FlightControllerKey.KeyAircraftAttitude))
+                val totalLoopTimeMs = System.currentTimeMillis() - loopStartTime
+
                 statusMessage.postValue(
                     "AutoPilot Active | Dist:${String.format(java.util.Locale.US, "%.1f", currentCumDistance)}m\n" +
                     "【送信命令(Stick)】LV:$sendLV LH:$finalLH RV:$sendRV RH:$sendRH\n" +
+                    "【処理速度】Infer:${lastInferenceTimeMs}ms | Loop:${totalLoopTimeMs}ms\n" +
                     "【実機レスポンス】Pitch:${String.format(java.util.Locale.US, "%.1f", attitude?.pitch ?: 0.0)}°"
                 )
 
@@ -205,6 +238,21 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 VirtualStickManager.getInstance().rightStick.verticalPosition = sendRV
                 VirtualStickManager.getInstance().rightStick.horizontalPosition = sendRH
 
+                // 7. CSVログへの即時保存 (AI推論値, 送信スティック値[-660~660], 推論時間ms, ループ処理時間ms)
+                try {
+                    logFileWriter?.appendLine(
+                        "$now,${String.format(java.util.Locale.US, "%.2f", currentCumDistance)}," +
+                        "${rawSticks[0]},${rawSticks[1]},${rawSticks[2]},${rawSticks[3]}," +
+                        "$sendLV,$finalLH,$sendRV,$sendRH," +
+                        "$lastInferenceTimeMs,$totalLoopTimeMs,${refEntry?.imagePath ?: ""}," +
+                        "${attitude?.pitch ?: 0.0},${attitude?.roll ?: 0.0},${attitude?.yaw ?: 0.0}"
+                    )
+                    logFileWriter?.flush()
+                } catch (e: Throwable) {
+                    Log.e(TAG, "Failed to write CSV log row: $e", e)
+                }
+
+                currentFrameIndex++
                 updateHistory(rawSticks)
 
                 currBitmap?.recycle()
@@ -261,7 +309,8 @@ class MapMatchingRepeatVM : DJIViewModel() {
     }
 
     private fun runInference(curr: Bitmap, ref: Bitmap): IntArray {
-        return try {
+        val startInference = System.currentTimeMillis()
+        val result = try {
             // Preprocess
             val currTensor = bitmapToTensor(curr)
             val refTensor = bitmapToTensor(ref)
@@ -294,6 +343,8 @@ class MapMatchingRepeatVM : DJIViewModel() {
             Log.e(TAG, "Inference error: $e", e)
             IntArray(4) { 0 }
         }
+        lastInferenceTimeMs = System.currentTimeMillis() - startInference
+        return result
     }
 
     private fun bitmapToTensor(bitmap: Bitmap): Tensor {
