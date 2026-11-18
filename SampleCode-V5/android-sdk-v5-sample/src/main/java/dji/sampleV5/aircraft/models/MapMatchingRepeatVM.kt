@@ -111,15 +111,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
         // バーチャラスティック制御権の獲得
         try {
             VirtualStickManager.getInstance().speedLevel = 1.0
-            VirtualStickManager.getInstance().setVirtualStickAdvancedModeEnabled(true)
-
-            val param = dji.sdk.keyvalue.value.flightcontroller.VirtualStickFlightControlParam().apply {
-                rollPitchCoordinateSystem = dji.sdk.keyvalue.value.flightcontroller.FlightCoordinateSystem.BODY
-                verticalControlMode = dji.sdk.keyvalue.value.flightcontroller.VerticalControlMode.VELOCITY
-                yawControlMode = dji.sdk.keyvalue.value.flightcontroller.YawControlMode.ANGULAR_VELOCITY
-                rollPitchControlMode = dji.sdk.keyvalue.value.flightcontroller.RollPitchControlMode.VELOCITY // ★ 速度制御モード (m/s)
-            }
-            VirtualStickManager.getInstance().sendVirtualStickAdvancedParam(param)
+            VirtualStickManager.getInstance().setVirtualStickAdvancedModeEnabled(false)
 
             VirtualStickManager.getInstance().enableVirtualStick(object : dji.v5.common.callback.CommonCallbacks.CompletionCallback {
                 override fun onSuccess() {
@@ -183,47 +175,35 @@ class MapMatchingRepeatVM : DJIViewModel() {
                     statusMessage.postValue("Waiting for camera frame...")
                 }
 
-                // 4. AI推論 ＆ デフォルト確実前進保証
+                // 4. AI推論 ＆ デフォルト確実前進保証 (-660 〜 660)
                 val rawSticks = if (currBitmap != null && refBitmap != null && model != null) {
                     runInference(currBitmap, refBitmap)
                 } else {
                     intArrayOf(0, 0, 350, 0)
                 }
 
-                // 5. 前進速度変換 (VELOCITYモード: 秒速 0.3m/s ＝ 30)
-                val pitchInput = if (rawSticks[2] > 50) (rawSticks[2] / 660.0) * 0.4 else 0.3
-                val finalRV = (pitchInput * 100).toInt().coerceIn(20, 40) // 毎秒 0.2m〜0.4m (約0.3m/sノロノロ安全走行)
-
-                // 6. 旋回Yaw角度フィードバック制御 (スタート直後3秒間はまっすぐ前進優先)
-                val attitude = KeyManager.getInstance().getValue(KeyTools.createKey(FlightControllerKey.KeyAircraftAttitude))
-                val currentYaw = attitude?.yaw ?: 0.0
-                val targetYaw = currentYaw
-                var yawErr = targetYaw - currentYaw
-                while (yawErr > 180.0) yawErr -= 360.0
-                while (yawErr < -180.0) yawErr += 360.0
-
-                val absYawErr = Math.abs(yawErr)
-                val calculatedLH = when {
-                    absYawErr < 3.0 -> 0
-                    absYawErr < 15.0 -> (if (yawErr > 0) 1 else -1) * 15
-                    else -> (if (yawErr > 0) 1 else -1) * 35
-                }
+                // 5. -660〜+660 のスティック値を直接使用
+                val sendLV = rawSticks[0].coerceIn(-660, 660)
+                val sendLH = rawSticks[1].coerceIn(-660, 660)
+                val sendRV = rawSticks[2].coerceIn(-660, 660)
+                val sendRH = rawSticks[3].coerceIn(-660, 660)
 
                 // スタート初期 (Frame 15コマ / 約3秒) は回転せずにまっすぐ前進を最優先！
-                val finalLH = if (currentFrameIndex < 15) 0 else calculatedLH
+                val finalLH = if (currentFrameIndex < 15) 0 else sendLH
 
                 predictedSticks.postValue(rawSticks)
+                val attitude = KeyManager.getInstance().getValue(KeyTools.createKey(FlightControllerKey.KeyAircraftAttitude))
                 statusMessage.postValue(
                     "AutoPilot Active | Dist:${String.format(java.util.Locale.US, "%.1f", currentCumDistance)}m\n" +
-                    "【送信命令】Speed:${String.format(java.util.Locale.US, "%.2f", finalRV / 100.0)}m/s | Yaw:${finalLH}deg/s\n" +
+                    "【送信命令(Stick)】LV:$sendLV LH:$finalLH RV:$sendRV RH:$sendRH\n" +
                     "【実機レスポンス】Pitch:${String.format(java.util.Locale.US, "%.1f", attitude?.pitch ?: 0.0)}°"
                 )
 
-                // 7. ドローンへ確実に有効コマンド送信
-                VirtualStickManager.getInstance().leftStick.verticalPosition = 0
+                // 6. ドローンへスティック値 (-660〜660) を直接送信
+                VirtualStickManager.getInstance().leftStick.verticalPosition = sendLV
                 VirtualStickManager.getInstance().leftStick.horizontalPosition = finalLH
-                VirtualStickManager.getInstance().rightStick.verticalPosition = finalRV
-                VirtualStickManager.getInstance().rightStick.horizontalPosition = 0
+                VirtualStickManager.getInstance().rightStick.verticalPosition = sendRV
+                VirtualStickManager.getInstance().rightStick.horizontalPosition = sendRH
 
                 updateHistory(rawSticks)
 

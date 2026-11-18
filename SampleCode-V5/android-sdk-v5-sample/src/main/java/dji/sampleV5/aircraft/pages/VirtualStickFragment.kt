@@ -87,7 +87,7 @@ class VirtualStickFragment : DJIFragment() {
         // バックグラウンドで非同期にモデルと地図(plan.csv)を事前読み込み（ボタン押下時のメインスレッド停止を回避）
         val appContext = requireContext().applicationContext
         java.util.concurrent.Executors.newSingleThreadExecutor().execute {
-            autoPilotVM.initAutoPilot(appContext, "images_20260831_170818")
+            autoPilotVM.initAutoPilot(appContext, "images_20261117_190222")
         }
     }
 
