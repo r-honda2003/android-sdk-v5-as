@@ -1,0 +1,1 @@
+timestamp,frame_id,version_note,wp_idx,total_wp,image_size_kb,total_chunks,sp_kpts_curr,sp_kpts_teach,lg_matches,match_ratio_pct,inliers_cnt,inlier_ratio_pct,pixel_error_px,t_sp_ms,t_lg_ms,t_depth_ms,t_ai_total_ms,fps,network_mbps,network_kb_s,jitter_ms,cmd_vx,cmd_vy,cmd_vz,cmd_yaw_rate,est_x_m,est_y_m,est_z_m,cpu_pct,gpu_pct,gpu_power_w,vram_mb

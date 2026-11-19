@@ -53,6 +53,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
     private var totalPlanDistance = 0.0
     private var currentCumDistance = 0.0
     private var lastUpdateTime = 0L
+    private var startYaw = 0.0
     
     private val stickHistory = LinkedList<FloatArray>() // Each element is FloatArray(4)
 
@@ -61,6 +62,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
     private var lastInferenceTimeMs: Long = 0L
 
     fun initAutoPilot(context: Context, imageDirName: String) {
+        Log.e(TAG, "=== DEBUG: initAutoPilot START ===")
         statusMessage.postValue("Initializing AutoPilot...")
         logFileDir = context.getExternalFilesDir(null)
         // Load Plan
@@ -83,7 +85,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
             }
             plan = planList.sortedBy { it.cumDistanceM }
             totalPlanDistance = plan.lastOrNull()?.cumDistanceM ?: 0.0
-            Log.d(TAG, "Plan loaded: ${plan.size} entries, total distance: $totalPlanDistance")
+            Log.e(TAG, "=== DEBUG: Plan loaded successfully (${plan.size} entries) ===")
             statusMessage.postValue("Plan OK: ${plan.size} frames (${String.format("%.1f", totalPlanDistance)}m)")
         } catch (e: Throwable) {
             Log.e(TAG, "Failed to load plan.csv: $e", e)
@@ -91,16 +93,22 @@ class MapMatchingRepeatVM : DJIViewModel() {
             return
         }
 
-        // Load Model
+        // Load Model (TEST: Skip Module.load to verify if PyTorch is causing SIGABRT)
+        Log.e(TAG, "=== DEBUG: Skipping Module.load for test ===")
+        statusMessage.postValue("Plan OK. AI Model Skipped for Test")
+        /*
         try {
-            val modelPath = assetFilePath(context, "map_matching_model_android.pt")
+            val modelFileName = "map_matching_model_android.pt"
+            val modelPath = assetFilePath(context, modelFileName)
+            
             model = Module.load(modelPath)
-            Log.d(TAG, "PyTorch Mobile Model successfully loaded: $modelPath")
+            Log.d(TAG, "PyTorch Mobile Model successfully loaded ($modelFileName): $modelPath")
             statusMessage.postValue("Plan & AI Model OK (${plan.size} frames)")
         } catch (e: Throwable) {
             Log.e(TAG, "Failed to load model: $e", e)
             statusMessage.postValue("Plan OK. Model skipped: ${e.message}")
         }
+        */
 
         // Set image directory
         val dir = context.getExternalFilesDir(null)
@@ -129,6 +137,9 @@ class MapMatchingRepeatVM : DJIViewModel() {
         currentCumDistance = 0.0
         currentFrameIndex = 0
         lastUpdateTime = System.currentTimeMillis()
+        val initialAttitude = KeyManager.getInstance().getValue(KeyTools.createKey(FlightControllerKey.KeyAircraftAttitude))
+        startYaw = initialAttitude?.yaw ?: 0.0
+        Log.d(TAG, "startAutoPilot: startYaw=$startYaw")
         stickHistory.clear()
         repeat(HISTORY_LEN) { stickHistory.add(FloatArray(4) { 0f }) }
 
@@ -240,12 +251,17 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 // 横滑り(Roll)を防止するためRHは0固定
                 val sendRH = 0
 
-                // 角度（Yaw）のズレ計算と角度ガード制御
+                // 角度（Yaw）のズレ計算（離陸時の角度 startYaw を基準とした相対角度で判定）
                 val attitude = KeyManager.getInstance().getValue(KeyTools.createKey(FlightControllerKey.KeyAircraftAttitude))
-                val currentYaw = attitude?.yaw ?: 0.0
-                val refYaw = refEntry?.yaw ?: currentYaw
+                val currentYaw = attitude?.yaw ?: startYaw
 
-                var yawDiff = refYaw - currentYaw
+                var relCurrentYaw = currentYaw - startYaw
+                while (relCurrentYaw > 180.0) relCurrentYaw -= 360.0
+                while (relCurrentYaw < -180.0) relCurrentYaw += 360.0
+
+                val refYaw = refEntry?.yaw ?: relCurrentYaw
+
+                var yawDiff = refYaw - relCurrentYaw
                 while (yawDiff > 180.0) yawDiff -= 360.0
                 while (yawDiff < -180.0) yawDiff += 360.0
 
@@ -261,10 +277,8 @@ class MapMatchingRepeatVM : DJIViewModel() {
                     sendLH
                 }
 
-                // 旋回中 (LHが大きい時) は前進力(RV)を大幅カットして膨らみ(大回り)を防止！
-                val isTurning = Math.abs(finalLH) > 150
-                val forwardScale = if (isTurning) 0.1f else 1.0f // 旋回中は前進力を10%に自動抑制
-                val sendRV = (rawSticks[2] * (maxPitchStick / 660.0) * forwardScale).toInt().coerceIn(-maxPitchStick, maxPitchStick)
+                // 前進力(RV)の計算 (急ブレーキ・カクつき防止のためスムーズにスケーリング)
+                val sendRV = (rawSticks[2] * (maxPitchStick / 660.0)).toInt().coerceIn(-maxPitchStick, maxPitchStick)
 
                 predictedSticks.postValue(rawSticks)
                 val totalLoopTimeMs = System.currentTimeMillis() - loopStartTime
