@@ -243,17 +243,12 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 val sendLH = rawSticks[1].coerceIn(-maxYawStick, maxYawStick)
                 val sendRH = 0
 
-                // 角度（Yaw）のズレ計算（離陸時の角度 startYaw を基準とした相対角度で判定）
+                // 角度（Yaw）のズレ計算（絶対方位角同士で正しく比較）
                 val attitude = KeyManager.getInstance().getValue(KeyTools.createKey(FlightControllerKey.KeyAircraftAttitude))
                 val currentYaw = attitude?.yaw ?: startYaw
+                val refYaw = refEntry?.yaw ?: currentYaw
 
-                var relCurrentYaw = currentYaw - startYaw
-                while (relCurrentYaw > 180.0) relCurrentYaw -= 360.0
-                while (relCurrentYaw < -180.0) relCurrentYaw += 360.0
-
-                val refYaw = refEntry?.yaw ?: relCurrentYaw
-
-                var yawDiff = refYaw - relCurrentYaw
+                var yawDiff = refYaw - currentYaw
                 while (yawDiff > 180.0) yawDiff -= 360.0
                 while (yawDiff < -180.0) yawDiff += 360.0
 
