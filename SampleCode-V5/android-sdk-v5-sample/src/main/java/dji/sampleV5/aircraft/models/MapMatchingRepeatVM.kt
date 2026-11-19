@@ -233,7 +233,8 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 val sendLV = rawSticks[0].coerceIn(-660, 660)
                 val sendLH = rawSticks[1].coerceIn(-660, 660)
                 val sendRV = (rawSticks[2] * (maxPitchStick / 660.0)).toInt().coerceIn(-maxPitchStick, maxPitchStick)
-                val sendRH = rawSticks[3].coerceIn(-660, 660)
+                // 横滑り(Roll)を防止し、前進(Pitch)+旋回(Yaw)で直進させるためRHは0固定
+                val sendRH = 0
 
                 // スタート初期 (Frame 15コマ / 約3秒) は回転せずにまっすぐ前進を最優先！
                 val finalLH = if (currentFrameIndex < 15) 0 else sendLH
