@@ -49,6 +49,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
     private var handler: Handler? = null
     private var imageDir: File? = null
     private var currentFrameIndex = 0
+    private var isPureE2EMode = false
     
     private var totalPlanDistance = 0.0
     private var currentCumDistance = 0.0
@@ -65,7 +66,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
         Log.e(TAG, "=== DEBUG: initAutoPilot START ===")
         statusMessage.postValue("Initializing AutoPilot...")
         logFileDir = context.getExternalFilesDir(null)
-        // Load Plan
+        // Load Plan (If plan.csv missing, fallback to Pure E2E Mode)
         try {
             val planList = mutableListOf<PlanEntry>()
             context.assets.open("plan.csv").bufferedReader().use { reader ->
@@ -85,23 +86,21 @@ class MapMatchingRepeatVM : DJIViewModel() {
             }
             plan = planList.sortedBy { it.cumDistanceM }
             totalPlanDistance = plan.lastOrNull()?.cumDistanceM ?: 0.0
+            isPureE2EMode = false
             Log.e(TAG, "=== DEBUG: Plan loaded successfully (${plan.size} entries) ===")
             statusMessage.postValue("Plan OK: ${plan.size} frames (${String.format("%.1f", totalPlanDistance)}m)")
         } catch (e: Throwable) {
-            Log.e(TAG, "Failed to load plan.csv: $e", e)
-            statusMessage.postValue("ERROR loading plan.csv: ${e.message}")
-            return
+            Log.d(TAG, "No plan.csv found or plan load error. Activating Pure E2E Mode: $e")
+            isPureE2EMode = true
+            plan = emptyList()
+            totalPlanDistance = 0.0
+            statusMessage.postValue("Pure E2E Mode Active (No plan.csv required)")
         }
 
-        // Load Model (Safe Mode: Skipped Module.load to guarantee zero-crash execution)
-        Log.d(TAG, "Safe AutoPilot Mode: Plan & Navigation & CSV Logging Active (Model load skipped)")
-        statusMessage.postValue("Plan Ready (${plan.size} frames)")
-
-        // Set image directory
+        // Set image directory (Optional for Pure E2E Mode)
         val dir = context.getExternalFilesDir(null)
         var targetDir = File(dir, imageDirName)
         if (!targetDir.exists()) {
-            // 指定のディレクトリが存在しない場合、最新の images_* ディレクトリを自動選択
             val latestImagesDir = dir?.listFiles { file -> file.isDirectory && file.name.startsWith("images_") }
                 ?.maxByOrNull { it.name }
             if (latestImagesDir != null) {
@@ -111,9 +110,6 @@ class MapMatchingRepeatVM : DJIViewModel() {
         }
         imageDir = targetDir
         Log.d(TAG, "Image directory set to: ${imageDir?.absolutePath}")
-        if (imageDir?.exists() == false) {
-            statusMessage.postValue("WARNING: Image dir missing: $imageDirName")
-        }
     }
 
     private var handlerThread: android.os.HandlerThread? = null
@@ -214,10 +210,10 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 val progressRate = if (totalPlanDistance > 0) currentCumDistance / totalPlanDistance else 0.0
                 currentProgress.postValue(progressRate)
 
-                // 2. Find reference image
-                val refEntry = findRefEntry(currentCumDistance)
-                val refBitmap = loadRefBitmap(refEntry?.imagePath)
-                if (refBitmap == null && refEntry?.imagePath != null) {
+                // 2. Find reference image (only in Map Matching mode)
+                val refEntry = if (!isPureE2EMode) findRefEntry(currentCumDistance) else null
+                val refBitmap = if (!isPureE2EMode) loadRefBitmap(refEntry?.imagePath) else null
+                if (!isPureE2EMode && refBitmap == null && refEntry?.imagePath != null) {
                     statusMessage.postValue("Ref img missing: ${refEntry.imagePath}")
                 }
 
@@ -228,7 +224,8 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 }
 
                 // 4. AI推論 ＆ デフォルト確実前進保証 (-660 〜 660)
-                val rawSticks = if (currBitmap != null && refBitmap != null && model != null) {
+                // pure E2E モード、または参照画像ありの Map Matching モードで推論を実行
+                val rawSticks = if (currBitmap != null && (refBitmap != null || isPureE2EMode) && model != null) {
                     runInference(currBitmap, refBitmap)
                 } else {
                     lastInferenceTimeMs = 0L
@@ -242,6 +239,11 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 val sendLV = rawSticks[0].coerceIn(-660, 660)
                 val sendLH = rawSticks[1].coerceIn(-maxYawStick, maxYawStick)
                 val sendRH = 0
+
+                // 角度（Yaw）のズレ計算（絶対方位角同士で正しく比較）
+                val attitude = KeyManager.getInstance().getValue(KeyTools.createKey(FlightControllerKey.KeyAircraftAttitude))
+                val currentYaw = attitude?.yaw ?: startYaw
+                val refYaw = refEntry?.yaw ?: currentYaw
 
                 // 角度（Yaw）のズレ計算（絶対方位角同士で正しく比較）
                 val attitude = KeyManager.getInstance().getValue(KeyTools.createKey(FlightControllerKey.KeyAircraftAttitude))
@@ -270,7 +272,8 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 val totalLoopTimeMs = System.currentTimeMillis() - loopStartTime
 
                 statusMessage.postValue(
-                    "AutoPilot Active | Dist:${String.format(java.util.Locale.US, "%.1f", currentCumDistance)}m\n" +
+                    (if (isPureE2EMode) "Pure E2E Active" else "AutoPilot Active") +
+                    " | Dist:${String.format(java.util.Locale.US, "%.1f", currentCumDistance)}m\n" +
                     "【送信命令(Stick)】LV:$sendLV LH:$finalLH RV:$sendRV RH:$sendRH\n" +
                     "【処理速度】Infer:${lastInferenceTimeMs}ms | Loop:${totalLoopTimeMs}ms\n" +
                     "【実機レスポンス】Pitch:${String.format(java.util.Locale.US, "%.1f", attitude?.pitch ?: 0.0)}° | YawDiff:${String.format(java.util.Locale.US, "%.1f", yawDiff)}°"
@@ -325,7 +328,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
             }
 
             if (isAutoPilotRunning) {
-                if (currentCumDistance < totalPlanDistance + 1.0) { // Keep running slightly past the end
+                if (isPureE2EMode || currentCumDistance < totalPlanDistance + 1.0) { // Keep running
                     handler?.postDelayed(this, INTERVAL_MS)
                 } else {
                     Log.d(TAG, "End of plan reached. Stopping.")
@@ -369,12 +372,11 @@ class MapMatchingRepeatVM : DJIViewModel() {
         }
     }
 
-    private fun runInference(curr: Bitmap, ref: Bitmap): IntArray {
+    private fun runInference(curr: Bitmap, ref: Bitmap?): IntArray {
         val startInference = System.currentTimeMillis()
         val result = try {
             // Preprocess
             val currTensor = bitmapToTensor(curr)
-            val refTensor = bitmapToTensor(ref)
             
             // History tensor [1, HISTORY_LEN * 4]
             val histData = FloatArray(HISTORY_LEN * 4)
@@ -387,12 +389,20 @@ class MapMatchingRepeatVM : DJIViewModel() {
             }
             val histTensor = Tensor.fromBlob(histData, longArrayOf(1, (HISTORY_LEN * 4).toLong()))
 
-            // Forward
-            val output = model?.forward(
-                IValue.from(currTensor),
-                IValue.from(refTensor),
-                IValue.from(histTensor)
-            )?.toTensor()
+            // Forward: If ref is present and not pure E2E, use 2-image MapMatching policy. Otherwise 1-image Baseline E2E policy.
+            val output = if (ref != null && !isPureE2EMode) {
+                val refTensor = bitmapToTensor(ref)
+                model?.forward(
+                    IValue.from(currTensor),
+                    IValue.from(refTensor),
+                    IValue.from(histTensor)
+                )?.toTensor()
+            } else {
+                model?.forward(
+                    IValue.from(currTensor),
+                    IValue.from(histTensor)
+                )?.toTensor()
+            }
 
             val outData = output?.dataAsFloatArray ?: floatArrayOf(0f, 0f, 0f, 0f)
             
