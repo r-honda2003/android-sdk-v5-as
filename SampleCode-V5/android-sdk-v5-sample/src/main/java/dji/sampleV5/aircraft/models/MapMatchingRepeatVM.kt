@@ -145,24 +145,26 @@ class MapMatchingRepeatVM : DJIViewModel() {
 
         // バーチャラスティック制御権の獲得
         try {
+            VirtualStickManager.getInstance().init()
             VirtualStickManager.getInstance().speedLevel = 1.0
             VirtualStickManager.getInstance().setVirtualStickAdvancedModeEnabled(false)
 
             VirtualStickManager.getInstance().enableVirtualStick(object : dji.v5.common.callback.CommonCallbacks.CompletionCallback {
                 override fun onSuccess() {
-                    Log.d(TAG, "VirtualStick enable SUCCESS")
+                    Log.d(TAG, "VirtualStick enable SUCCESS in startAutoPilot")
                 }
                 override fun onFailure(error: dji.v5.common.error.IDJIError) {
-                    Log.e(TAG, "VS_ERROR [Code:${error.errorCode()}]: ${error.description()}")
+                    Log.e(TAG, "VS_ERROR in startAutoPilot [Code:${error.errorCode()}]: ${error.description()}")
                 }
             })
         } catch (e: Throwable) {
-            Log.e(TAG, "VS_EX: ${e.message}")
+            Log.e(TAG, "VS_EX in startAutoPilot: ${e.message}")
         }
 
         handlerThread = android.os.HandlerThread("AutoPilotThread").apply { start() }
         handler = Handler(handlerThread!!.looper)
         handler?.post(autoPilotTask)
+        statusMessage.postValue("AutoPilot Running...")
         Log.d(TAG, "AutoPilot started")
     }
 
@@ -229,13 +231,12 @@ class MapMatchingRepeatVM : DJIViewModel() {
                     intArrayOf(0, 0, 350, 0)
                 }
 
-                // 5. スティック値計算 ＆ 旋回時の前進スピード自動抑制（小回りターン化）
-                val maxPitchStick = 250 // 直進時の最高前進スティック上限値 (250)
+                // 5. スティック値計算 ＆ 確実な前進力確保
+                val maxPitchStick = 450 // 直進時の最高前進スティック上限値を力強い450に強化
                 val maxYawStick = 450   // 旋回時の最高ラダースティック上限値 (450)
 
                 val sendLV = rawSticks[0].coerceIn(-660, 660)
                 val sendLH = rawSticks[1].coerceIn(-maxYawStick, maxYawStick)
-                // 横滑り(Roll)を防止するためRHは0固定
                 val sendRH = 0
 
                 // 角度（Yaw）のズレ計算（離陸時の角度 startYaw を基準とした相対角度で判定）
@@ -253,7 +254,6 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 while (yawDiff < -180.0) yawDiff += 360.0
 
                 // スタート初期 (Frame 15コマ / 約3秒) は回転せずに直進最優先！
-                // 30度以上の大きな角度ズレ発生時は「角度ガード」が発動して目標Yaw角度へ強制復帰
                 val finalLH = if (currentFrameIndex < 15) {
                     0
                 } else if (Math.abs(yawDiff) >= 30.0) {
@@ -264,8 +264,8 @@ class MapMatchingRepeatVM : DJIViewModel() {
                     sendLH
                 }
 
-                // 前進力(RV)の計算 (急ブレーキ・カクつき防止のためスムーズにスケーリング)
-                val sendRV = (rawSticks[2] * (maxPitchStick / 660.0)).toInt().coerceIn(-maxPitchStick, maxPitchStick)
+                // 前進力(RV)の計算 (十分な推力を保証)
+                val sendRV = (rawSticks[2] * (maxPitchStick / 660.0)).toInt().coerceIn(200, maxPitchStick)
 
                 predictedSticks.postValue(rawSticks)
                 val totalLoopTimeMs = System.currentTimeMillis() - loopStartTime
@@ -277,11 +277,28 @@ class MapMatchingRepeatVM : DJIViewModel() {
                     "【実機レスポンス】Pitch:${String.format(java.util.Locale.US, "%.1f", attitude?.pitch ?: 0.0)}° | YawDiff:${String.format(java.util.Locale.US, "%.1f", yawDiff)}°"
                 )
 
-                // 6. ドローンへスティック値 (-660〜660) を直接送信
-                VirtualStickManager.getInstance().leftStick.verticalPosition = sendLV
-                VirtualStickManager.getInstance().leftStick.horizontalPosition = finalLH
-                VirtualStickManager.getInstance().rightStick.verticalPosition = sendRV
-                VirtualStickManager.getInstance().rightStick.horizontalPosition = sendRH
+                // 6. ドローンへスティック値およびフライトコントローラ高度制御パラメータを直接送信
+                try {
+                    VirtualStickManager.getInstance().leftStick.verticalPosition = sendLV
+                    VirtualStickManager.getInstance().leftStick.horizontalPosition = finalLH
+                    VirtualStickManager.getInstance().rightStick.verticalPosition = sendRV
+                    VirtualStickManager.getInstance().rightStick.horizontalPosition = sendRH
+
+                    // DJI SDK V5 Advanced Param ダイレクト即時制御パケットの送信
+                    val vsParam = dji.sdk.keyvalue.value.flightcontroller.VirtualStickFlightControlParam()
+                    vsParam.rollPitchCoordinateSystem = dji.sdk.keyvalue.value.flightcontroller.FlightCoordinateSystem.BODY
+                    vsParam.verticalControlMode = dji.sdk.keyvalue.value.flightcontroller.VerticalControlMode.VELOCITY
+                    vsParam.yawControlMode = dji.sdk.keyvalue.value.flightcontroller.YawControlMode.ANGULAR_VELOCITY
+                    vsParam.rollPitchControlMode = dji.sdk.keyvalue.value.flightcontroller.RollPitchControlMode.ANGLE
+                    vsParam.pitch = (sendRV.toDouble() / 660.0) * 15.0 // 前傾ピッチ角 (前進推力)
+                    vsParam.yaw = (finalLH.toDouble() / 660.0) * 90.0   // 旋回角速度 (deg/s)
+                    vsParam.roll = 0.0
+                    vsParam.verticalThrottle = 0.0
+
+                    VirtualStickManager.getInstance().sendVirtualStickAdvancedParam(vsParam)
+                } catch (e: Throwable) {
+                    Log.e(TAG, "Failed to send stick positions: ${e.message}")
+                }
 
                 // 7. CSVログへの即時保存 (AI推論値, 送信スティック値[-660~660], 推論時間ms, ループ処理時間ms)
                 try {
