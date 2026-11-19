@@ -89,9 +89,15 @@ class MapMatchingRepeatVM : DJIViewModel() {
         }
 
         // Load Model
-        // 注: 現在アセット内にあるモデルファイル (.ptl / .pt) は PyTorch Mobile 1.13.1 の C++ Native Loader と
-        // バージョン非互換があり、Module.load を実行すると Native SIGABRT でアプリが落ちるためロードを安全に停止します。
-        statusMessage.postValue("Plan OK. Model skipped (Native crash prevention)")
+        try {
+            val modelPath = assetFilePath(context, "map_matching_model_android.pt")
+            model = Module.load(modelPath)
+            Log.d(TAG, "Model loaded successfully from $modelPath")
+            statusMessage.postValue("Plan OK. Model loaded!")
+        } catch (e: Throwable) {
+            Log.e(TAG, "Failed to load model: ${e.message}", e)
+            statusMessage.postValue("Plan OK. Model load failed (${e.message})")
+        }
 
         // Set image directory
         val dir = context.getExternalFilesDir(null)
@@ -168,6 +174,8 @@ class MapMatchingRepeatVM : DJIViewModel() {
             Log.e(TAG, "Failed to close CSV logger: $e", e)
         }
 
+        TelemetryLogger.clearRepeatData()
+
         Log.d(TAG, "AutoPilot stopped")
     }
 
@@ -204,12 +212,12 @@ class MapMatchingRepeatVM : DJIViewModel() {
                     statusMessage.postValue("Waiting for camera frame...")
                 }
 
-                // 4. AI推論 ＆ デフォルト確実前進保証 (-660 〜 660)
-                val rawSticks = if (currBitmap != null && refBitmap != null && model != null) {
+                // 4. AI推論 (生float出力 -1~1 と スティックint値 -660~660)
+                val (rawOutputs, rawSticks) = if (currBitmap != null && refBitmap != null && model != null) {
                     runInference(currBitmap, refBitmap)
                 } else {
                     lastInferenceTimeMs = 0L
-                    intArrayOf(0, 0, 350, 0)
+                    Pair(floatArrayOf(0f, 0f, 0f, 0f), intArrayOf(0, 0, 350, 0))
                 }
 
                 // 5. -660〜+660 のスティック値を直接使用
@@ -224,6 +232,16 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 predictedSticks.postValue(rawSticks)
                 val attitude = KeyManager.getInstance().getValue(KeyTools.createKey(FlightControllerKey.KeyAircraftAttitude))
                 val totalLoopTimeMs = System.currentTimeMillis() - loopStartTime
+
+                // TelemetryLogger に repeat 制御データ (推論時間, ループ時間, mobilenet生float出力 -1~1) をセット
+                TelemetryLogger.setRepeatData(
+                    inferenceTimeMs = lastInferenceTimeMs,
+                    loopTimeMs = totalLoopTimeMs,
+                    predLeftV = rawOutputs[0],
+                    predLeftH = rawOutputs[1],
+                    predRightV = rawOutputs[2],
+                    predRightH = rawOutputs[3]
+                )
 
                 statusMessage.postValue(
                     "AutoPilot Active | Dist:${String.format(java.util.Locale.US, "%.1f", currentCumDistance)}m\n" +
@@ -308,9 +326,11 @@ class MapMatchingRepeatVM : DJIViewModel() {
         }
     }
 
-    private fun runInference(curr: Bitmap, ref: Bitmap): IntArray {
+    private fun runInference(curr: Bitmap, ref: Bitmap): Pair<FloatArray, IntArray> {
         val startInference = System.currentTimeMillis()
-        val result = try {
+        var rawOutputs = floatArrayOf(0f, 0f, 0f, 0f)
+        var stickInputs = intArrayOf(0, 0, 0, 0)
+        try {
             // Preprocess
             val currTensor = bitmapToTensor(curr)
             val refTensor = bitmapToTensor(ref)
@@ -334,17 +354,17 @@ class MapMatchingRepeatVM : DJIViewModel() {
             )?.toTensor()
 
             val outData = output?.dataAsFloatArray ?: floatArrayOf(0f, 0f, 0f, 0f)
-            
-            // Convert to Int sticks (-660 to 660)
-            IntArray(4) { i ->
-                (outData[i] * 660).toInt().coerceIn(-660, 660)
+            if (outData.size >= 4) {
+                rawOutputs = floatArrayOf(outData[0], outData[1], outData[2], outData[3])
+                stickInputs = IntArray(4) { i ->
+                    (outData[i] * 660).toInt().coerceIn(-660, 660)
+                }
             }
         } catch (e: Throwable) {
             Log.e(TAG, "Inference error: $e", e)
-            IntArray(4) { 0 }
         }
         lastInferenceTimeMs = System.currentTimeMillis() - startInference
-        return result
+        return Pair(rawOutputs, stickInputs)
     }
 
     private fun bitmapToTensor(bitmap: Bitmap): Tensor {

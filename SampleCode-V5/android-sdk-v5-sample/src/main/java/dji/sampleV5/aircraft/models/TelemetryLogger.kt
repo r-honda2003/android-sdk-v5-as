@@ -41,7 +41,40 @@ object TelemetryLogger {
     private var lastYaw: Double? = null
     private var lastTimestamp: Long? = null
 
+    // REPEAT制御データ (Z列以降に記録)
+    @Volatile private var repeatInferenceTimeMs: Long = 0L
+    @Volatile private var repeatLoopTimeMs: Long = 0L
+    @Volatile private var mobilenetPredLeftV: Float = 0f
+    @Volatile private var mobilenetPredLeftH: Float = 0f
+    @Volatile private var mobilenetPredRightV: Float = 0f
+    @Volatile private var mobilenetPredRightH: Float = 0f
+
     private val listenerId = this
+
+    fun setRepeatData(
+        inferenceTimeMs: Long,
+        loopTimeMs: Long,
+        predLeftV: Float,
+        predLeftH: Float,
+        predRightV: Float,
+        predRightH: Float
+    ) {
+        this.repeatInferenceTimeMs = inferenceTimeMs
+        this.repeatLoopTimeMs = loopTimeMs
+        this.mobilenetPredLeftV = predLeftV
+        this.mobilenetPredLeftH = predLeftH
+        this.mobilenetPredRightV = predRightV
+        this.mobilenetPredRightH = predRightH
+    }
+
+    fun clearRepeatData() {
+        this.repeatInferenceTimeMs = 0L
+        this.repeatLoopTimeMs = 0L
+        this.mobilenetPredLeftV = 0f
+        this.mobilenetPredLeftH = 0f
+        this.mobilenetPredRightV = 0f
+        this.mobilenetPredRightH = 0f
+    }
 
     fun startLogging(context: Context, sessionId: String) {
         if (isRecording) return
@@ -49,12 +82,13 @@ object TelemetryLogger {
 
         lastYaw = null
         lastTimestamp = null
+        clearRepeatData()
 
         val dir = context.getExternalFilesDir(null)
         val fileName = "telemetry_$sessionId.csv"
         val file = File(dir, fileName)
         fileWriter = FileWriter(file, true)
-        fileWriter?.appendLine("time,image_path,vx,vy,vz,pitch,roll,yaw,lat,lng,alt,gps_signal,battery_percent,stick_left_v,stick_left_h,stick_right_v,stick_right_h,calc_stick_left_v,calc_stick_left_h,calc_stick_right_v,calc_stick_right_h,send_stick_left_v,send_stick_left_h,send_stick_right_v,send_stick_right_h")
+        fileWriter?.appendLine("time,image_path,vx,vy,vz,pitch,roll,yaw,lat,lng,alt,gps_signal,battery_percent,stick_left_v,stick_left_h,stick_right_v,stick_right_h,calc_stick_left_v,calc_stick_left_h,calc_stick_right_v,calc_stick_right_h,send_stick_left_v,send_stick_left_h,send_stick_right_v,send_stick_right_h,repeat_inference_time_ms,repeat_loop_time_ms,mobilenet_pred_stick_left_v,mobilenet_pred_stick_left_h,mobilenet_pred_stick_right_v,mobilenet_pred_stick_right_h")
 
         subscribeKeys()
         startPeriodicWrite()
@@ -64,6 +98,7 @@ object TelemetryLogger {
         isRecording = false
         handler?.removeCallbacksAndMessages(null)
         unsubscribeKeys()
+        clearRepeatData()
         fileWriter?.flush()
         fileWriter?.close()
         fileWriter = null
@@ -204,8 +239,13 @@ object TelemetryLogger {
                 val sendStickRV = if (stickRV != 0) stickRV else calcStickRV
                 val sendStickRH = if (stickRH != 0) stickRH else calcStickRH
 
+                val predLVStr = String.format(java.util.Locale.US, "%.6f", mobilenetPredLeftV)
+                val predLHStr = String.format(java.util.Locale.US, "%.6f", mobilenetPredLeftH)
+                val predRVStr = String.format(java.util.Locale.US, "%.6f", mobilenetPredRightV)
+                val predRHStr = String.format(java.util.Locale.US, "%.6f", mobilenetPredRightH)
+
                 fileWriter?.appendLine(
-                    "$now,$imagePath,$vx,$vy,$vz,$pitch,$roll,$yaw,$lat,$lng,$alt,$gps,$battery,$stickLV,$stickLH,$stickRV,$stickRH,$calcStickLV,$calcStickLH,$calcStickRV,$calcStickRH,$sendStickLV,$sendStickLH,$sendStickRV,$sendStickRH"
+                    "$now,$imagePath,$vx,$vy,$vz,$pitch,$roll,$yaw,$lat,$lng,$alt,$gps,$battery,$stickLV,$stickLH,$stickRV,$stickRH,$calcStickLV,$calcStickLH,$calcStickRV,$calcStickRH,$sendStickLV,$sendStickLH,$sendStickRV,$sendStickRH,$repeatInferenceTimeMs,$repeatLoopTimeMs,$predLVStr,$predLHStr,$predRVStr,$predRHStr"
                 )
                 fileWriter?.flush()
 
