@@ -231,12 +231,13 @@ class MapMatchingRepeatVM : DJIViewModel() {
                     intArrayOf(0, 0, 350, 0)
                 }
 
-                // 5. AIモデルの可変推論値を Teach 速度（マイルドな可変ピッチ）に合わせてスケーリング
-                val maxPitchStick = 250 // Teach走行の速度感に合わせる最高スティック上限値 (250)
+                // 5. スティック値計算 ＆ 旋回時の前進スピード自動抑制（小回りターン化）
+                val maxPitchStick = 250 // 直進時の最高前進スティック上限値 (250)
+                val maxYawStick = 450   // 旋回時の最高ラダースティック上限値 (450)
+
                 val sendLV = rawSticks[0].coerceIn(-660, 660)
-                val sendLH = rawSticks[1].coerceIn(-660, 660)
-                val sendRV = (rawSticks[2] * (maxPitchStick / 660.0)).toInt().coerceIn(-maxPitchStick, maxPitchStick)
-                // 横滑り(Roll)を防止し、前進(Pitch)+旋回(Yaw)で直進させるためRHは0固定
+                val sendLH = rawSticks[1].coerceIn(-maxYawStick, maxYawStick)
+                // 横滑り(Roll)を防止するためRHは0固定
                 val sendRH = 0
 
                 // 角度（Yaw）のズレ計算と角度ガード制御
@@ -253,12 +254,17 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 val finalLH = if (currentFrameIndex < 15) {
                     0
                 } else if (Math.abs(yawDiff) >= 30.0) {
-                    val guardYawStick = (yawDiff * 15.0).toInt().coerceIn(-500, 500)
+                    val guardYawStick = (yawDiff * 10.0).toInt().coerceIn(-400, 400)
                     Log.d(TAG, "Yaw Angle Guard Active: diff=${String.format("%.1f", yawDiff)}°, sendLH=$guardYawStick")
                     guardYawStick
                 } else {
                     sendLH
                 }
+
+                // 旋回中 (LHが大きい時) は前進力(RV)を大幅カットして膨らみ(大回り)を防止！
+                val isTurning = Math.abs(finalLH) > 150
+                val forwardScale = if (isTurning) 0.1f else 1.0f // 旋回中は前進力を10%に自動抑制
+                val sendRV = (rawSticks[2] * (maxPitchStick / 660.0) * forwardScale).toInt().coerceIn(-maxPitchStick, maxPitchStick)
 
                 predictedSticks.postValue(rawSticks)
                 val totalLoopTimeMs = System.currentTimeMillis() - loopStartTime
