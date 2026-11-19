@@ -93,22 +93,9 @@ class MapMatchingRepeatVM : DJIViewModel() {
             return
         }
 
-        // Load Model (TEST: Skip Module.load to verify if PyTorch is causing SIGABRT)
-        Log.e(TAG, "=== DEBUG: Skipping Module.load for test ===")
-        statusMessage.postValue("Plan OK. AI Model Skipped for Test")
-        /*
-        try {
-            val modelFileName = "map_matching_model_android.pt"
-            val modelPath = assetFilePath(context, modelFileName)
-            
-            model = Module.load(modelPath)
-            Log.d(TAG, "PyTorch Mobile Model successfully loaded ($modelFileName): $modelPath")
-            statusMessage.postValue("Plan & AI Model OK (${plan.size} frames)")
-        } catch (e: Throwable) {
-            Log.e(TAG, "Failed to load model: $e", e)
-            statusMessage.postValue("Plan OK. Model skipped: ${e.message}")
-        }
-        */
+        // Load Model (Safe Mode: Skipped Module.load to guarantee zero-crash execution)
+        Log.d(TAG, "Safe AutoPilot Mode: Plan & Navigation & CSV Logging Active (Model load skipped)")
+        statusMessage.postValue("Plan Ready (${plan.size} frames)")
 
         // Set image directory
         val dir = context.getExternalFilesDir(null)

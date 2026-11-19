@@ -53,11 +53,22 @@ class VirtualStickVM : DJIViewModel() {
     }
 
     fun enableVirtualStick(callback: CommonCallbacks.CompletionCallback) {
-        VirtualStickManager.getInstance().enableVirtualStick(callback)
+        try {
+            VirtualStickManager.getInstance().init()
+            VirtualStickManager.getInstance().enableVirtualStick(callback)
+        } catch (e: Throwable) {
+            dji.v5.utils.common.LogUtils.e("VirtualStickVM", "enableVirtualStick Exception: " + e.message)
+            callback.onFailure(dji.v5.common.error.DJICommonError.FACTORY.build(e.message))
+        }
     }
 
     fun disableVirtualStick(callback: CommonCallbacks.CompletionCallback) {
-        VirtualStickManager.getInstance().disableVirtualStick(callback)
+        try {
+            VirtualStickManager.getInstance().disableVirtualStick(callback)
+        } catch (e: Throwable) {
+            dji.v5.utils.common.LogUtils.e("VirtualStickVM", "disableVirtualStick Exception: " + e.message)
+            callback.onFailure(dji.v5.common.error.DJICommonError.FACTORY.build(e.message))
+        }
     }
 
     fun setSpeedLevel(speedLevel: Double) {

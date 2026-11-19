@@ -87,7 +87,7 @@ class VirtualStickFragment : DJIFragment() {
         // バックグラウンドで非同期にモデルと地図(plan.csv)を事前読み込み（ボタン押下時のメインスレッド停止を回避）
         val appContext = requireContext().applicationContext
         java.util.concurrent.Executors.newSingleThreadExecutor().execute {
-            autoPilotVM.initAutoPilot(appContext, "images_20261118_113402")
+            autoPilotVM.initAutoPilot(appContext, "images_20261117_190222TE")
         }
     }
 
@@ -97,19 +97,59 @@ class VirtualStickFragment : DJIFragment() {
                 virtualStickVM.enableVirtualStick(object : CommonCallbacks.CompletionCallback {
                     override fun onSuccess() {
                         mainHandler.post {
-                            ToastUtils.showToast("enableVirtualStick success.")
+                            try {
+                                ToastUtils.showToast("enableVirtualStick success.")
+                            } catch (e: Throwable) {
+                                // ignore
+                            }
                         }
                     }
 
                     override fun onFailure(error: IDJIError) {
                         mainHandler.post {
-                            ToastUtils.showToast("enableVirtualStick error,$error")
+                            try {
+                                ToastUtils.showToast("enableVirtualStick error: ${error.description()}")
+                            } catch (e: Throwable) {
+                                // ignore
+                            }
                         }
                     }
                 })
             } catch (e: Throwable) {
-                ToastUtils.showToast("Exception: ${e.message}")
+                try {
+                    ToastUtils.showToast("Exception: ${e.message}")
+                } catch (t: Throwable) {
+                    // ignore
+                }
             }
+        }
+
+        // 長押しで直前のクラッシュログ / Logcat を画面表示
+        binding?.btnEnableVirtualStick?.setOnLongClickListener {
+            try {
+                val logDir = requireContext().getExternalFilesDir(null)
+                val crashFile = java.io.File(logDir, "crash_log.txt")
+                val logcatFile = java.io.File(logDir, "app_logcat.txt")
+                
+                val content = when {
+                    crashFile.exists() && crashFile.length() > 0 -> {
+                        "--- CRASH LOG ---\n" + crashFile.readLines().takeLast(30).joinToString("\n")
+                    }
+                    logcatFile.exists() && logcatFile.length() > 0 -> {
+                        "--- APP LOGCAT ---\n" + logcatFile.readLines().takeLast(30).joinToString("\n")
+                    }
+                    else -> "No crash log or logcat file found."
+                }
+                
+                android.app.AlertDialog.Builder(requireContext())
+                    .setTitle("Latest Crash / Logcat")
+                    .setMessage(content)
+                    .setPositiveButton("OK", null)
+                    .show()
+            } catch (e: Throwable) {
+                ToastUtils.showToast("Log read error: ${e.message}")
+            }
+            true
         }
         binding?.btnDisableVirtualStick?.setOnClickListener {
             try {
@@ -249,7 +289,15 @@ class VirtualStickFragment : DJIFragment() {
         })
     }
 
+    private var lastUpdateInfoTime = 0L
+
     private fun updateVirtualStickInfo() {
+        val now = System.currentTimeMillis()
+        if (now - lastUpdateInfoTime < 100L) return // 100ms以内の過剰なUI描画連投を防止
+        lastUpdateInfoTime = now
+
+        if (!isAdded || binding == null) return
+
         val builder = StringBuilder()
         builder.append("Speed level:").append(virtualStickVM.currentSpeedLevel.value)
         builder.append("\n")
@@ -279,7 +327,9 @@ class VirtualStickFragment : DJIFragment() {
             builder.append("AutoPilot Sticks: LV:${sticks[0]} LH:${sticks[1]} RV:${sticks[2]} RH:${sticks[3]}")
         }
         mainHandler.post {
-            binding?.virtualStickInfoTv?.text = builder.toString()
+            if (isAdded && binding != null) {
+                binding?.virtualStickInfoTv?.text = builder.toString()
+            }
         }
     }
 }

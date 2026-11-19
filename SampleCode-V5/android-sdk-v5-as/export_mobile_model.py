@@ -48,14 +48,7 @@ def export_model(checkpoint_path="map_matching_model.pt", output_path="map_match
     example_hist = torch.randn(1, history_len * 4)
 
     traced = torch.jit.trace(model, (example_x, example_ref, example_hist))
-
-    try:
-        from torch.utils.mobile_optimizer import optimize_for_mobile
-        mobile_module = optimize_for_mobile(traced)
-        mobile_module._save_for_lite_interpreter(output_path)
-    except Exception as e:
-        print(f"Fallback to standard torch.jit save: {e}")
-        traced.save(output_path)
+    traced.save(output_path)
 
     print(f"Successfully exported mobile TorchScript model to {output_path}")
 
