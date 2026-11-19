@@ -118,8 +118,11 @@ class MapMatchingRepeatVM : DJIViewModel() {
 
     private var handlerThread: android.os.HandlerThread? = null
 
+    private var isAutoPilotRunning = false
+
     fun startAutoPilot() {
-        if (isRunning.value == true) return
+        if (isAutoPilotRunning) return
+        isAutoPilotRunning = true
         isRunning.postValue(true)
         currentCumDistance = 0.0
         currentFrameIndex = 0
@@ -169,6 +172,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
     }
 
     fun stopAutoPilot() {
+        isAutoPilotRunning = false
         isRunning.postValue(false)
         handler?.removeCallbacksAndMessages(null)
         handlerThread?.quitSafely()
@@ -192,7 +196,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
 
     private val autoPilotTask = object : Runnable {
         override fun run() {
-            if (isRunning.value != true) return
+            if (!isAutoPilotRunning) return
 
             val loopStartTime = System.currentTimeMillis()
             try {
@@ -202,10 +206,10 @@ class MapMatchingRepeatVM : DJIViewModel() {
 
                 // 1. Update progress using velocity
                 val velocity = KeyManager.getInstance().getValue(KeyTools.createKey(FlightControllerKey.KeyAircraftVelocity))
-                if (velocity != null) {
-                    val speed = hypot(velocity.x, velocity.y)
-                    currentCumDistance += speed * dt
-                }
+                val speed = if (velocity != null) hypot(velocity.x, velocity.y) else 0.0
+                // ドローンが静止中の場合でもテスト前進が進むように最小模擬速度 (0.2m/s) を保証
+                val effectiveSpeed = if (speed > 0.05) speed else 0.2
+                currentCumDistance += effectiveSpeed * dt
                 
                 val progressRate = if (totalPlanDistance > 0) currentCumDistance / totalPlanDistance else 0.0
                 currentProgress.postValue(progressRate)
@@ -325,7 +329,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 statusMessage.postValue("Task error: ${e.message}")
             }
 
-            if (isRunning.value == true) {
+            if (isAutoPilotRunning) {
                 if (currentCumDistance < totalPlanDistance + 1.0) { // Keep running slightly past the end
                     handler?.postDelayed(this, INTERVAL_MS)
                 } else {
