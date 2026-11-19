@@ -75,6 +75,23 @@ def trim_trailing_stall(valid: pd.DataFrame, stall_speed_mps: float, trailing_st
     return valid.iloc[: last_moving_idx + 1].reset_index(drop=True)
 
 
+def trim_initial_ground_idle(valid: pd.DataFrame) -> pd.DataFrame:
+    """離陸前の地上待機区間 (alt < 0.2m かつ 低速) をトリムし、実際の離陸・運動開始位置からPlanを構築する。"""
+    takeoff_idx = 0
+    for i in range(len(valid)):
+        row = valid.iloc[i]
+        alt = float(row["alt"]) if "alt" in row and pd.notna(row["alt"]) else 0.0
+        vx = float(row["vx"]) if "vx" in row and pd.notna(row["vx"]) else 0.0
+        vy = float(row["vy"]) if "vy" in row and pd.notna(row["vy"]) else 0.0
+        if alt >= 0.2 or math.hypot(vx, vy) >= 0.1:
+            takeoff_idx = i
+            break
+    if takeoff_idx > 0:
+        print(f"離陸前の地上待機区間({takeoff_idx}行)を除外してPlanを作成します")
+        return valid.iloc[takeoff_idx:].reset_index(drop=True)
+    return valid
+
+
 def build_plan(df: pd.DataFrame, interval_ms: int, stall_speed_mps: float, trailing_stall_min_s: float) -> pd.DataFrame:
     # 1. image_pathが空の行(記録開始直後、カメラ初期化前など)を除外
     valid = df[df["image_path"].notna() & (df["image_path"].astype(str).str.strip() != "")].copy()
@@ -82,6 +99,9 @@ def build_plan(df: pd.DataFrame, interval_ms: int, stall_speed_mps: float, trail
 
     if len(valid) == 0:
         raise ValueError("image_pathが有効な行が1件もありません。")
+
+    # NEW: 離陸前の地上待機区間を除外
+    valid = trim_initial_ground_idle(valid)
 
     # NEW: 末尾の停止区間を打ち切る
     valid = trim_trailing_stall(valid, stall_speed_mps, trailing_stall_min_s)
