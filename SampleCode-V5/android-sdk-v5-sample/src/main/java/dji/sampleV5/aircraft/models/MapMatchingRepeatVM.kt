@@ -35,7 +35,8 @@ class MapMatchingRepeatVM : DJIViewModel() {
     data class PlanEntry(
         val time: Long,
         val imagePath: String,
-        val cumDistanceM: Double
+        val cumDistanceM: Double,
+        val yaw: Double = 0.0
     )
 
     val isRunning = MutableLiveData(false)
@@ -70,10 +71,12 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 reader.forEachLine { line ->
                     val cols = line.split(",")
                     if (cols.size >= 6) {
+                        val yawVal = if (cols.size > 9) cols[9].toDoubleOrNull() ?: 0.0 else 0.0
                         planList.add(PlanEntry(
                             time = cols[1].toLong(),
                             imagePath = cols[2],
-                            cumDistanceM = cols[5].toDouble()
+                            cumDistanceM = cols[5].toDouble(),
+                            yaw = yawVal
                         ))
                     }
                 }
@@ -236,18 +239,35 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 // 横滑り(Roll)を防止し、前進(Pitch)+旋回(Yaw)で直進させるためRHは0固定
                 val sendRH = 0
 
-                // スタート初期 (Frame 15コマ / 約3秒) は回転せずにまっすぐ前進を最優先！
-                val finalLH = if (currentFrameIndex < 15) 0 else sendLH
+                // 角度（Yaw）のズレ計算と角度ガード制御
+                val attitude = KeyManager.getInstance().getValue(KeyTools.createKey(FlightControllerKey.KeyAircraftAttitude))
+                val currentYaw = attitude?.yaw ?: 0.0
+                val refYaw = refEntry?.yaw ?: currentYaw
+
+                var yawDiff = refYaw - currentYaw
+                while (yawDiff > 180.0) yawDiff -= 360.0
+                while (yawDiff < -180.0) yawDiff += 360.0
+
+                // スタート初期 (Frame 15コマ / 約3秒) は回転せずに直進最優先！
+                // 30度以上の大きな角度ズレ発生時は「角度ガード」が発動して目標Yaw角度へ強制復帰
+                val finalLH = if (currentFrameIndex < 15) {
+                    0
+                } else if (Math.abs(yawDiff) >= 30.0) {
+                    val guardYawStick = (yawDiff * 15.0).toInt().coerceIn(-500, 500)
+                    Log.d(TAG, "Yaw Angle Guard Active: diff=${String.format("%.1f", yawDiff)}°, sendLH=$guardYawStick")
+                    guardYawStick
+                } else {
+                    sendLH
+                }
 
                 predictedSticks.postValue(rawSticks)
-                val attitude = KeyManager.getInstance().getValue(KeyTools.createKey(FlightControllerKey.KeyAircraftAttitude))
                 val totalLoopTimeMs = System.currentTimeMillis() - loopStartTime
 
                 statusMessage.postValue(
                     "AutoPilot Active | Dist:${String.format(java.util.Locale.US, "%.1f", currentCumDistance)}m\n" +
                     "【送信命令(Stick)】LV:$sendLV LH:$finalLH RV:$sendRV RH:$sendRH\n" +
                     "【処理速度】Infer:${lastInferenceTimeMs}ms | Loop:${totalLoopTimeMs}ms\n" +
-                    "【実機レスポンス】Pitch:${String.format(java.util.Locale.US, "%.1f", attitude?.pitch ?: 0.0)}°"
+                    "【実機レスポンス】Pitch:${String.format(java.util.Locale.US, "%.1f", attitude?.pitch ?: 0.0)}° | YawDiff:${String.format(java.util.Locale.US, "%.1f", yawDiff)}°"
                 )
 
                 // 6. ドローンへスティック値 (-660〜660) を直接送信
