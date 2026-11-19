@@ -43,6 +43,7 @@ def parse_args():
         "--trailing_stall_min_s", type=float, default=5.0,
         help="末尾でこの秒数以上連続で止まっていたら、その区間をPlanから打ち切る。デフォルト5.0秒",
     )
+    parser.add_argument("--ref_session_id", type=int, default=None, help="指定した場合、このsession_idの行のみからPlanを構築する")
     return parser.parse_args()
 
 
@@ -172,6 +173,10 @@ def build_plan(df: pd.DataFrame, interval_ms: int, stall_speed_mps: float, trail
 def main():
     args = parse_args()
     df = pd.read_csv(args.telemetry)
+
+    if args.ref_session_id is not None and "session_id" in df.columns:
+        print(f"session_id == {args.ref_session_id} のデータのみ抽出します。")
+        df = df[df["session_id"] == args.ref_session_id].copy()
 
     total_rows = len(df)
     empty_image = df["image_path"].isna().sum() + (df["image_path"].astype(str).str.strip() == "").sum()

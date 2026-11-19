@@ -89,13 +89,29 @@ class MapMatchingRepeatVM : DJIViewModel() {
         }
 
         // Load Model
-        // 注: 現在アセット内にあるモデルファイル (.ptl / .pt) は PyTorch Mobile 1.13.1 の C++ Native Loader と
-        // バージョン非互換があり、Module.load を実行すると Native SIGABRT でアプリが落ちるためロードを安全に停止します。
-        statusMessage.postValue("Plan OK. Model skipped (Native crash prevention)")
+        try {
+            val modelPath = assetFilePath(context, "map_matching_model_android.pt")
+            model = Module.load(modelPath)
+            Log.d(TAG, "PyTorch Mobile Model successfully loaded: $modelPath")
+            statusMessage.postValue("Plan & AI Model OK (${plan.size} frames)")
+        } catch (e: Throwable) {
+            Log.e(TAG, "Failed to load model: $e", e)
+            statusMessage.postValue("Plan OK. Model skipped: ${e.message}")
+        }
 
         // Set image directory
         val dir = context.getExternalFilesDir(null)
-        imageDir = File(dir, imageDirName)
+        var targetDir = File(dir, imageDirName)
+        if (!targetDir.exists()) {
+            // 指定のディレクトリが存在しない場合、最新の images_* ディレクトリを自動選択
+            val latestImagesDir = dir?.listFiles { file -> file.isDirectory && file.name.startsWith("images_") }
+                ?.maxByOrNull { it.name }
+            if (latestImagesDir != null) {
+                targetDir = latestImagesDir
+                Log.d(TAG, "Fallback to latest images directory: ${targetDir.name}")
+            }
+        }
+        imageDir = targetDir
         Log.d(TAG, "Image directory set to: ${imageDir?.absolutePath}")
         if (imageDir?.exists() == false) {
             statusMessage.postValue("WARNING: Image dir missing: $imageDirName")

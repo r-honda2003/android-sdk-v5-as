@@ -34,7 +34,7 @@ def parse_args():
     parser.add_argument("--telemetry", required=True, help="Path to matched_telemetry.csv (ref_image_path列を含むもの)")
     parser.add_argument("--images_dir", required=True, help="Path to images_<sessionId>/ directory")
     parser.add_argument("--output_model", default="map_matching_model.pt", help="Output model checkpoint path")
-    parser.add_argument("--epochs", type=int, default=20)
+    parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--val_session_id", type=int, default=-1)
