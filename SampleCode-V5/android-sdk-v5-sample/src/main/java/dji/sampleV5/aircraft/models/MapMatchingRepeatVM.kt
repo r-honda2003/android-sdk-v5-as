@@ -228,10 +228,11 @@ class MapMatchingRepeatVM : DJIViewModel() {
                     intArrayOf(0, 0, 350, 0)
                 }
 
-                // 5. -660〜+660 のスティック値を直接使用
+                // 5. AIモデルの可変推論値を Teach 速度（マイルドな可変ピッチ）に合わせてスケーリング
+                val maxPitchStick = 250 // Teach走行の速度感に合わせる最高スティック上限値 (250)
                 val sendLV = rawSticks[0].coerceIn(-660, 660)
                 val sendLH = rawSticks[1].coerceIn(-660, 660)
-                val sendRV = rawSticks[2].coerceIn(-660, 660)
+                val sendRV = (rawSticks[2] * (maxPitchStick / 660.0)).toInt().coerceIn(-maxPitchStick, maxPitchStick)
                 val sendRH = rawSticks[3].coerceIn(-660, 660)
 
                 // スタート初期 (Frame 15コマ / 約3秒) は回転せずにまっすぐ前進を最優先！
