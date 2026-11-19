@@ -138,6 +138,21 @@ def load_dataset_df(telemetry_path: str, history_len: int) -> pd.DataFrame:
         )
     df = df[df["image_path"].notna() & (df["image_path"].astype(str).str.strip() != "")].copy()
     df = df[df["session_id"] != 0].copy()  # 着陸中/ノイズ区間を除外
+
+    # スティック列が0または存在しない場合、send_stick_*列またはcalc_stick_*列が存在すれば自動採用
+    stick_map = {
+        "stick_left_v": ["send_stick_left_v", "calc_stick_left_v"],
+        "stick_left_h": ["send_stick_left_h", "calc_stick_left_h"],
+        "stick_right_v": ["send_stick_right_v", "calc_stick_right_v"],
+        "stick_right_h": ["send_stick_right_h", "calc_stick_right_h"],
+    }
+    for orig, candidates in stick_map.items():
+        if orig not in df.columns or (df[orig] == 0).all():
+            for cand in candidates:
+                if cand in df.columns and not (df[cand] == 0).all():
+                    df[orig] = df[cand]
+                    break
+
     df = add_stick_history_columns(df, history_len)
     return df
 

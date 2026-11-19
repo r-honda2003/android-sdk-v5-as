@@ -32,7 +32,7 @@ def parse_args():
     parser.add_argument("--alt_threshold_m", type=float, default=0.15, help="この高度(m)未満を'着陸中'候補とみなす。デフォルト0.15")
     parser.add_argument("--speed_threshold_mps", type=float, default=0.05, help="この速度(m/s)未満を'静止中'候補とみなす。デフォルト0.05")
     parser.add_argument("--min_landed_duration_s", type=float, default=2.0, help="着陸中とみなす最小継続時間(秒)。デフォルト2.0")
-    parser.add_argument("--min_session_duration_s", type=float, default=3.0, help="これより短い飛行区間はノイズとして除外(session_id=0)。デフォルト3.0")
+    parser.add_argument("--min_session_duration_s", type=float, default=10.0, help="これより短い飛行区間はノイズとして除外(session_id=0)。デフォルト10.0")
     return parser.parse_args()
 
 

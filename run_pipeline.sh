@@ -9,11 +9,12 @@ ASSETS_DIR="$PROJECT_ROOT/SampleCode-V5/android-sdk-v5-sample/src/main/assets"
 SAMPLE_DIR="$PROJECT_ROOT/SampleCode-V5"
 
 # 引数またはデフォルトのファイル名
-TELEMETRY_CSV="${1:-telemetry_20261118_113402.csv}"
-IMAGES_DIR="${2:-images_20261118_113402}"
+TELEMETRY_CSV="${1:-telemetry_20261118_112806.csv}"
+IMAGES_DIR="${2:-images_20261118_112806}"
+REF_SESSION="${3:-3}"
 
 echo "=========================================="
-echo "使用データ: $TELEMETRY_CSV / $IMAGES_DIR"
+echo "使用データ: $TELEMETRY_CSV / $IMAGES_DIR (基準セッション: Session $REF_SESSION)"
 echo "=========================================="
 
 # 1. Python処理 ＆ モデル学習
@@ -26,17 +27,17 @@ echo "Step 2: 逆算スティック制御量計算..."
 python3 compute_calculated_sticks.py --input telemetry_with_sessions.csv --output telemetry_with_calc.csv || exit 1
 
 echo "Step 3: 地図(plan.csv)作成..."
-python3 build_plan.py --telemetry telemetry_with_calc.csv --output plan.csv --interval_ms 500 || exit 1
+python3 build_plan.py --telemetry telemetry_with_calc.csv --session_id "$REF_SESSION" --output plan.csv --interval_ms 500 || exit 1
 
 echo "Step 4: マッチング紐付け..."
-python3 match_sessions.py --telemetry telemetry_with_calc.csv --ref_session_id 1 --output matched_telemetry.csv || exit 1
+python3 match_sessions.py --telemetry telemetry_with_calc.csv --ref_session_id "$REF_SESSION" --output matched_telemetry.csv || exit 1
 
 echo "Step 5: PyTorchモデル学習..."
 python3 train_map_matching.py \
     --telemetry matched_telemetry.csv \
     --images_dir "$IMAGES_DIR" \
     --output_model map_matching_model.pt \
-    --epochs 5 \
+    --epochs 10 \
     --val_session_id -1 \
     --history_len 5 || exit 1
 

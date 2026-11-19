@@ -35,6 +35,7 @@ def parse_args():
     parser.add_argument("--telemetry", required=True, help="Path to telemetry_<sessionId>.csv (image_path列を含むもの)")
     parser.add_argument("--output", default="plan.csv", help="Output plan CSV path")
     parser.add_argument("--interval_ms", type=int, default=500, help="基準フレームの間引き間隔(ms)。デフォルト500ms")
+    parser.add_argument("--session_id", type=int, default=1, help="Planを作成する基準セッションID (デフォルト: 1)")
     parser.add_argument(
         "--stall_speed_mps", type=float, default=0.05,
         help="この速度(m/s)未満を'止まっている'とみなす閾値。デフォルト0.05",
@@ -177,6 +178,10 @@ def main():
     empty_image = df["image_path"].isna().sum() + (df["image_path"].astype(str).str.strip() == "").sum()
     print(f"telemetry総行数: {total_rows}")
     print(f"image_pathが空の行(除外対象): {empty_image}")
+
+    if "session_id" in df.columns and args.session_id > 0:
+        df = df[df["session_id"] == args.session_id].copy()
+        print(f"session_id={args.session_id} のデータに絞り込みました ({len(df)} 行)")
 
     plan = build_plan(df, args.interval_ms, args.stall_speed_mps, args.trailing_stall_min_s)
 
