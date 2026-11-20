@@ -203,8 +203,27 @@ class VirtualStickFragment : DJIFragment() {
         }
 
         binding?.btnEnableAutoPilot?.setOnClickListener {
-            autoPilotVM.startAutoPilot()
-            ToastUtils.showToast("AutoPilot Enabled")
+            val builder = android.app.AlertDialog.Builder(requireContext())
+            builder.setTitle("PC Inference Server IP")
+            val input = android.widget.EditText(requireContext())
+            input.setText(autoPilotVM.pcServerIp)
+            input.setSelection(input.text.length)
+            builder.setView(input)
+            builder.setPositiveButton("Start (PC Mode)") { _, _ ->
+                val ip = input.text.toString().trim()
+                if (ip.isNotEmpty()) {
+                    autoPilotVM.pcServerIp = ip
+                }
+                autoPilotVM.isPcInferenceMode = true
+                autoPilotVM.startAutoPilot()
+                ToastUtils.showToast("PC AutoPilot Started (Server: ${autoPilotVM.pcServerIp})")
+            }
+            builder.setNegativeButton("Start (Local Mode)") { _, _ ->
+                autoPilotVM.isPcInferenceMode = false
+                autoPilotVM.startAutoPilot()
+                ToastUtils.showToast("Local AutoPilot Started")
+            }
+            builder.show()
         }
 
         binding?.btnDisableAutoPilot?.setOnClickListener {

@@ -62,6 +62,9 @@ class MapMatchingRepeatVM : DJIViewModel() {
     private var logFileWriter: java.io.FileWriter? = null
     private var lastInferenceTimeMs: Long = 0L
 
+    var pcServerIp: String = "192.168.1.100"
+    var isPcInferenceMode: Boolean = true
+
     fun initAutoPilot(context: Context, imageDirName: String) {
         Log.e(TAG, "=== DEBUG: initAutoPilot START ===")
         statusMessage.postValue("Initializing AutoPilot...")
@@ -223,10 +226,16 @@ class MapMatchingRepeatVM : DJIViewModel() {
                     statusMessage.postValue("Waiting for camera frame...")
                 }
 
-                // 4. AI推論 ＆ デフォルト確実前進保証 (-660 〜 660)
-                // pure E2E モード、または参照画像ありの Map Matching モードで推論を実行
-                val rawSticks = if (currBitmap != null && (refBitmap != null || isPureE2EMode) && model != null) {
-                    runInference(currBitmap, refBitmap)
+                // 4. AI推論 (PC推論 / ローカル推論) ＆ デフォルト確実前進保証 (-660 〜 660)
+                val rawSticks = if (currBitmap != null && (refBitmap != null || isPureE2EMode)) {
+                    if (isPcInferenceMode) {
+                        runInferenceOnPc(currBitmap, refBitmap)
+                    } else if (model != null) {
+                        runInference(currBitmap, refBitmap)
+                    } else {
+                        lastInferenceTimeMs = 0L
+                        intArrayOf(0, 0, 350, 0)
+                    }
                 } else {
                     lastInferenceTimeMs = 0L
                     intArrayOf(0, 0, 350, 0)
@@ -267,10 +276,11 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 val totalLoopTimeMs = System.currentTimeMillis() - loopStartTime
 
                 statusMessage.postValue(
+                    (if (isPcInferenceMode) "[PC Inference] " else "[Local Inference] ") +
                     (if (isPureE2EMode) "Pure E2E Active" else "AutoPilot Active") +
                     " | Dist:${String.format(java.util.Locale.US, "%.1f", currentCumDistance)}m\n" +
                     "【送信命令(Stick)】LV:$sendLV LH:$finalLH RV:$sendRV RH:$sendRH\n" +
-                    "【処理速度】Infer:${lastInferenceTimeMs}ms | Loop:${totalLoopTimeMs}ms\n" +
+                    "【処理速度】Infer:${lastInferenceTimeMs}ms | Loop:${totalLoopTimeMs}ms (PC Server: $pcServerIp)\n" +
                     "【実機レスポンス】Pitch:${String.format(java.util.Locale.US, "%.1f", attitude?.pitch ?: 0.0)}° | YawDiff:${String.format(java.util.Locale.US, "%.1f", yawDiff)}°"
                 )
 
@@ -364,6 +374,82 @@ class MapMatchingRepeatVM : DJIViewModel() {
         } catch (e: Throwable) {
             Log.e(TAG, "Failed to get current image as bitmap: $e")
             null
+        }
+    }
+
+    private fun runInferenceOnPc(curr: Bitmap, ref: Bitmap?): IntArray {
+        val startInference = System.currentTimeMillis()
+        return try {
+            val resized = Bitmap.createScaledBitmap(curr, 224, 224, true)
+            val baos = ByteArrayOutputStream()
+            resized.compress(Bitmap.CompressFormat.JPEG, 85, baos)
+            val currJpeg = baos.toByteArray()
+            if (resized != curr) resized.recycle()
+
+            val refJpeg = if (ref != null && !isPureE2EMode) {
+                val refResized = Bitmap.createScaledBitmap(ref, 224, 224, true)
+                val refBaos = ByteArrayOutputStream()
+                refResized.compress(Bitmap.CompressFormat.JPEG, 85, refBaos)
+                val bytes = refBaos.toByteArray()
+                if (refResized != ref) refResized.recycle()
+                bytes
+            } else null
+
+            val cleanHost = pcServerIp.trim().removePrefix("http://").removeSuffix("/")
+            val targetUrl = if (cleanHost.contains(":")) "http://$cleanHost/predict" else "http://$cleanHost:5000/predict"
+
+            val conn = (java.net.URL(targetUrl).openConnection() as java.net.HttpURLConnection).apply {
+                requestMethod = "POST"
+                doOutput = true
+                connectTimeout = 1000
+                readTimeout = 1000
+                setRequestProperty("Content-Type", "application/octet-stream")
+
+                val histData = FloatArray(HISTORY_LEN * 4)
+                for (i in 0 until HISTORY_LEN) {
+                    val s = stickHistory[i]
+                    histData[i * 4 + 0] = s[0] / 660f
+                    histData[i * 4 + 1] = s[1] / 660f
+                    histData[i * 4 + 2] = s[2] / 660f
+                    histData[i * 4 + 3] = s[3] / 660f
+                }
+                setRequestProperty("X-Stick-History", histData.joinToString(","))
+                setRequestProperty("X-Is-Pure-E2E", if (isPureE2EMode) "1" else "0")
+                if (refJpeg != null) {
+                    setRequestProperty("X-Has-Ref-Image", "1")
+                    setRequestProperty("X-Curr-Img-Len", currJpeg.size.toString())
+                }
+            }
+
+            conn.outputStream.use { os ->
+                os.write(currJpeg)
+                if (refJpeg != null) {
+                    os.write(refJpeg)
+                }
+                os.flush()
+            }
+
+            val responseCode = conn.responseCode
+            if (responseCode == 200) {
+                val jsonStr = conn.inputStream.bufferedReader().use { it.readText() }
+                val json = org.json.JSONObject(jsonStr)
+                val sticksArray = json.getJSONArray("sticks")
+                lastInferenceTimeMs = System.currentTimeMillis() - startInference
+                intArrayOf(
+                    sticksArray.getInt(0),
+                    sticksArray.getInt(1),
+                    sticksArray.getInt(2),
+                    sticksArray.getInt(3)
+                )
+            } else {
+                Log.e(TAG, "PC Server returned HTTP $responseCode")
+                lastInferenceTimeMs = System.currentTimeMillis() - startInference
+                intArrayOf(0, 0, 350, 0)
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "PC Server connection error: ${e.message}")
+            lastInferenceTimeMs = System.currentTimeMillis() - startInference
+            intArrayOf(0, 0, 350, 0)
         }
     }
 
