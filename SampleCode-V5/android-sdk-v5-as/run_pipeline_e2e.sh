@@ -7,8 +7,8 @@ export NUMEXPR_MAX_THREADS=1
 
 # パラメータ設定 (コマンドライン引数で上書き可能)
 # 使い方: ./run_pipeline_e2e.sh <TELEMETRY_CSV> <IMAGES_DIR> [EPOCHS]
-TELEMETRY_CSV="${1:-telemetry_20261118_112806.csv}"
-IMAGES_DIR="${2:-images_20261118_112806}"
+TELEMETRY_CSV="${1:-telemetry_20261120_092631.csv}"
+IMAGES_DIR="${2:-images_20261120_092631}"
 EPOCHS="${3:-10}"
 
 echo "=========================================="
