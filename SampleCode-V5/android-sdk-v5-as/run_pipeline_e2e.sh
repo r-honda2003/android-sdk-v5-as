@@ -48,10 +48,13 @@ if [ -f "baseline_model.pt" ]; then
     echo -e "\n[Step 3] Exporting Pure E2E TorchScript model for Android PyTorch Mobile ..."
     python3 export_mobile_model.py --model baseline_model.pt --output map_matching_model_android.pt --type baseline
 
-    # 古い plan.csv があれば除去して Pure E2E モードを有効化
-    if [ -f "$ASSET_DIR/plan.csv" ]; then
-        echo "Removing old plan.csv to activate Pure E2E Mode on Android..."
-        rm -f "$ASSET_DIR/plan.csv"
+    # コース総距離・進捗判定用の plan.csv を生成してアセットへコピー
+    echo -e "\nGenerating plan.csv from $TELEMETRY_CSV for route progress and auto-stop..."
+    python3 build_plan.py --telemetry "$TELEMETRY_CSV" --output plan.csv
+
+    if [ -f "plan.csv" ] && [ -d "$ASSET_DIR" ]; then
+        echo "Copying plan.csv to $ASSET_DIR/plan.csv ..."
+        cp plan.csv "$ASSET_DIR/plan.csv"
     fi
 
     if [ -d "$ASSET_DIR" ]; then

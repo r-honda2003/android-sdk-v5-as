@@ -275,10 +275,17 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 predictedSticks.postValue(rawSticks)
                 val totalLoopTimeMs = System.currentTimeMillis() - loopStartTime
 
+                val percentStr = if (totalPlanDistance > 0) {
+                    val pct = (currentCumDistance / totalPlanDistance * 100.0).coerceIn(0.0, 100.0)
+                    "Progress: ${String.format(java.util.Locale.US, "%.0f", pct)}% (${String.format(java.util.Locale.US, "%.1f", currentCumDistance)}m / ${String.format(java.util.Locale.US, "%.1f", totalPlanDistance)}m)"
+                } else {
+                    "Dist: ${String.format(java.util.Locale.US, "%.1f", currentCumDistance)}m"
+                }
+
                 statusMessage.postValue(
                     (if (isPcInferenceMode) "[PC Inference] " else "[Local Inference] ") +
                     (if (isPureE2EMode) "Pure E2E Active" else "AutoPilot Active") +
-                    " | Dist:${String.format(java.util.Locale.US, "%.1f", currentCumDistance)}m\n" +
+                    " | " + percentStr + "\n" +
                     "【送信命令(Stick)】LV:$sendLV LH:$finalLH RV:$sendRV RH:$sendRH\n" +
                     "【処理速度】Infer:${lastInferenceTimeMs}ms | Loop:${totalLoopTimeMs}ms (PC Server: $pcServerIp)\n" +
                     "【実機レスポンス】Pitch:${String.format(java.util.Locale.US, "%.1f", attitude?.pitch ?: 0.0)}° | YawDiff:${String.format(java.util.Locale.US, "%.1f", yawDiff)}°"
@@ -333,11 +340,13 @@ class MapMatchingRepeatVM : DJIViewModel() {
             }
 
             if (isAutoPilotRunning) {
-                if (isPureE2EMode || currentCumDistance < totalPlanDistance + 1.0) { // Keep running
+                if (isPureE2EMode || totalPlanDistance <= 0.0 || currentCumDistance < totalPlanDistance + 0.5) { // Keep running
                     handler?.postDelayed(this, INTERVAL_MS)
                 } else {
-                    Log.d(TAG, "End of plan reached. Stopping.")
+                    Log.d(TAG, "Goal reached! Total distance: ${totalPlanDistance}m. Stopping AutoPilot.")
+                    statusMessage.postValue("🎉 Goal Reached! AutoPilot Completed (${String.format(java.util.Locale.US, "%.1f", totalPlanDistance)}m)")
                     stopAutoPilot()
+                }
                 }
             }
         }
