@@ -3,7 +3,13 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/nav_aircraft"
-    app:startDestination="@id/virtual_stick_page">
+    app:startDestination="@id/teach_repeat_page">
+
+    <fragment
+        android:id="@+id/teach_repeat_page"
+        android:name="dji.sampleV5.aircraft.pages.TeachRepeatFragment"
+        android:label="teach_repeat_page"
+        tools:layout="@layout/frag_teach_repeat_page" />
 
     <fragment
         android:id="@+id/virtual_stick_page"
