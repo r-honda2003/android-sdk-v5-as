@@ -62,7 +62,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
     private var logFileWriter: java.io.FileWriter? = null
     private var lastInferenceTimeMs: Long = 0L
 
-    var pcServerIp: String = "192.168.13.14"
+    var pcServerIp: String = "192.168.12.60"
     var isPcInferenceMode: Boolean = true
     var isRcOverrideEnabled: Boolean = true // DAgGER用: プロポ操作による手動割り込みを有効化 (2回目/3回目)
 
