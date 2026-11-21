@@ -91,6 +91,11 @@ class TeachRepeatFragment : DJIFragment() {
         autoPilotVM.statusMessage.observe(viewLifecycleOwner) { msg ->
             binding?.tvRepeatStatus?.text = msg
         }
+
+        val appContext = requireContext().applicationContext
+        java.util.concurrent.Executors.newSingleThreadExecutor().execute {
+            autoPilotVM.initAutoPilot(appContext, "images_20261117_190222")
+        }
     }
 
     private fun initBtnClickListener() {
@@ -164,7 +169,8 @@ class TeachRepeatFragment : DJIFragment() {
                 autoPilotVM.pcServerIp = ip
             }
             autoPilotVM.isRcOverrideEnabled = true
-            autoPilotVM.startAutoPilot()
+            autoPilotVM.isPcInferenceMode = true
+            autoPilotVM.startAutoPilot(requireContext().applicationContext)
             ToastUtils.showToast("Repeat Mode 起動 (PC: ${autoPilotVM.pcServerIp})")
         }
 

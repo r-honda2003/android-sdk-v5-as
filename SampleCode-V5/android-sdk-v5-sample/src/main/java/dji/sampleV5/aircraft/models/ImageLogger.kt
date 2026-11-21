@@ -51,6 +51,7 @@ object ImageLogger {
     }
 
     private var isRecording = false
+    private var isCapturing = false
     private var imageDir: File? = null
     private var activeCameraIndex: ComponentIndexType? = null
 
@@ -70,7 +71,7 @@ object ImageLogger {
             height: Int,
             format: ICameraStreamManager.FrameFormat
         ) {
-            if (!isRecording) return
+            if (!isRecording && !isCapturing) return
             try {
                 val dataCopy = if (offset == 0 && length == frameData.size) {
                     frameData.copyOf()
@@ -107,6 +108,28 @@ object ImageLogger {
         }
     }
 
+    fun startCapturing(context: Context) {
+        if (isCapturing || isRecording) return
+        isCapturing = true
+        latestFrame = null
+        MediaDataCenter.getInstance().cameraStreamManager
+            .addAvailableCameraUpdatedListener(availableCameraListener)
+        Log.d(TAG, "startCapturing initialized for AI inference")
+    }
+
+    fun stopCapturing() {
+        if (isRecording) return
+        isCapturing = false
+        activeCameraIndex?.let {
+            MediaDataCenter.getInstance().cameraStreamManager.removeFrameListener(frameListener)
+        }
+        MediaDataCenter.getInstance().cameraStreamManager
+            .removeAvailableCameraUpdatedListener(availableCameraListener)
+        activeCameraIndex = null
+        latestFrame = null
+        Log.d(TAG, "stopCapturing finished")
+    }
+
     fun startLogging(context: Context, sessionId: String) {
         if (isRecording) return
         isRecording = true
@@ -122,13 +145,15 @@ object ImageLogger {
 
     fun stopLogging() {
         isRecording = false
-        activeCameraIndex?.let {
-            MediaDataCenter.getInstance().cameraStreamManager.removeFrameListener(frameListener)
+        if (!isCapturing) {
+            activeCameraIndex?.let {
+                MediaDataCenter.getInstance().cameraStreamManager.removeFrameListener(frameListener)
+            }
+            MediaDataCenter.getInstance().cameraStreamManager
+                .removeAvailableCameraUpdatedListener(availableCameraListener)
+            activeCameraIndex = null
+            latestFrame = null
         }
-        MediaDataCenter.getInstance().cameraStreamManager
-            .removeAvailableCameraUpdatedListener(availableCameraListener)
-        activeCameraIndex = null
-        latestFrame = null
     }
 
     /**

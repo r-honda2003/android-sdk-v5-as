@@ -216,12 +216,12 @@ class VirtualStickFragment : DJIFragment() {
                     autoPilotVM.pcServerIp = ip
                 }
                 autoPilotVM.isPcInferenceMode = true
-                autoPilotVM.startAutoPilot()
+                autoPilotVM.startAutoPilot(requireContext().applicationContext)
                 ToastUtils.showToast("PC AutoPilot Started (Server: ${autoPilotVM.pcServerIp})")
             }
             builder.setNegativeButton("Start (Local Mode)") { _, _ ->
                 autoPilotVM.isPcInferenceMode = false
-                autoPilotVM.startAutoPilot()
+                autoPilotVM.startAutoPilot(requireContext().applicationContext)
                 ToastUtils.showToast("Local AutoPilot Started")
             }
             builder.show()
@@ -255,7 +255,7 @@ class VirtualStickFragment : DJIFragment() {
         // 2回目・3回目：AI飛行 (プロポ操作で一瞬割り込み・手離せば即時自動復帰)
         binding?.btnDaggerRunAi?.setOnClickListener {
             autoPilotVM.isRcOverrideEnabled = true
-            autoPilotVM.startAutoPilot()
+            autoPilotVM.startAutoPilot(requireContext().applicationContext)
             ToastUtils.showToast("2/3回目 AI飛行開始 (PC IP: ${autoPilotVM.pcServerIp})")
         }
 
@@ -268,7 +268,7 @@ class VirtualStickFragment : DJIFragment() {
         // 4回目：AI飛行 (介入なし評価モード)
         binding?.btnDaggerRunEval?.setOnClickListener {
             autoPilotVM.isRcOverrideEnabled = false
-            autoPilotVM.startAutoPilot()
+            autoPilotVM.startAutoPilot(requireContext().applicationContext)
             ToastUtils.showToast("4回目 AI飛行開始 (介入なし評価 / PC IP: ${autoPilotVM.pcServerIp})")
         }
 

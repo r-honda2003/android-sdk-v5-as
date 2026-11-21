@@ -226,6 +226,23 @@ class InferenceHTTPRequestHandler(BaseHTTPRequestHandler):
         return
 
 
+def get_local_ip():
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # Connect to external address (packets aren't sent) to find LAN routing interface IP
+        s.connect(('8.8.8.8', 80))
+        ip = s.getsockname()[0]
+    except Exception:
+        try:
+            ip = socket.gethostbyname(socket.gethostname())
+        except Exception:
+            ip = "127.0.0.1"
+    finally:
+        s.close()
+    return ip
+
+
 def main():
     parser = argparse.ArgumentParser(description="PC Inference HTTP Server for DJI Drone Autonomous Flight")
     parser.add_argument("--model", default="baseline_model.pt", help="PyTorch model checkpoint (.pt)")
@@ -239,10 +256,7 @@ def main():
     server_address = ("0.0.0.0", args.port)
     httpd = ThreadedHTTPServer(server_address, InferenceHTTPRequestHandler)
 
-    # Print local IP addresses for convenience
-    import socket
-    hostname = socket.gethostname()
-    local_ip = socket.gethostbyname(hostname)
+    local_ip = get_local_ip()
     print("==========================================================")
     print(f"🚀 PC Inference Server RUNNING on http://0.0.0.0:{args.port}")
     print(f"   Local IP Address for Tablet: http://{local_ip}:{args.port}")

@@ -120,8 +120,14 @@ class MapMatchingRepeatVM : DJIViewModel() {
 
     private var isAutoPilotRunning = false
 
-    fun startAutoPilot() {
+    fun startAutoPilot(context: Context? = null) {
         if (isAutoPilotRunning) return
+        if (context != null) {
+            ImageLogger.startCapturing(context)
+            if (logFileDir == null) {
+                initAutoPilot(context, "images_20261117_190222")
+            }
+        }
         isAutoPilotRunning = true
         isRunning.postValue(true)
         currentCumDistance = 0.0
@@ -177,6 +183,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
         handler?.removeCallbacksAndMessages(null)
         handlerThread?.quitSafely()
         handlerThread = null
+        ImageLogger.stopCapturing()
         VirtualStickManager.getInstance().leftStick.horizontalPosition = 0
         VirtualStickManager.getInstance().leftStick.verticalPosition = 0
         VirtualStickManager.getInstance().rightStick.horizontalPosition = 0
@@ -224,10 +231,10 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 // 3. Get current image
                 val currBitmap = getCurrentImageAsBitmap()
                 if (currBitmap == null) {
-                    statusMessage.postValue("Waiting for camera frame...")
+                    statusMessage.postValue("⚠️ カメラ画像待機中 (ImageLogger未受信)")
                 }
 
-                // 4. AI推論 (PC推論 / ローカル推論) ＆ デフォルト確実前進保証 (-660 〜 660)
+                // 4. AI推論 (PC推論 / ローカル推論)
                 val rawSticks = if (currBitmap != null && (refBitmap != null || isPureE2EMode)) {
                     if (isPcInferenceMode) {
                         runInferenceOnPc(currBitmap, refBitmap)
@@ -235,11 +242,11 @@ class MapMatchingRepeatVM : DJIViewModel() {
                         runInference(currBitmap, refBitmap)
                     } else {
                         lastInferenceTimeMs = 0L
-                        intArrayOf(0, 0, 350, 0)
+                        intArrayOf(0, 0, 0, 0)
                     }
                 } else {
                     lastInferenceTimeMs = 0L
-                    intArrayOf(0, 0, 350, 0)
+                    intArrayOf(0, 0, 0, 0)
                 }
 
                 // 5. プロポ（RC）割り込み＆スティック値計算
@@ -477,12 +484,14 @@ class MapMatchingRepeatVM : DJIViewModel() {
             } else {
                 Log.e(TAG, "PC Server returned HTTP $responseCode")
                 lastInferenceTimeMs = System.currentTimeMillis() - startInference
-                intArrayOf(0, 0, 350, 0)
+                statusMessage.postValue("⚠️ PC Server Error (HTTP $responseCode)")
+                intArrayOf(0, 0, 0, 0)
             }
         } catch (e: Throwable) {
             Log.e(TAG, "PC Server connection error: ${e.message}")
             lastInferenceTimeMs = System.currentTimeMillis() - startInference
-            intArrayOf(0, 0, 350, 0)
+            statusMessage.postValue("⚠️ PC Server Connection Failed: ${e.message}")
+            intArrayOf(0, 0, 0, 0)
         }
     }
 
