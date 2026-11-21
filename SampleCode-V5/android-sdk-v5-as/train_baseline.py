@@ -151,15 +151,20 @@ def main():
     print(f"検出されたsession_id: {available_sessions}")
 
     val_session_id = args.val_session_id
-    if val_session_id == -1:
-        val_session_id = max(available_sessions)
-    if val_session_id not in available_sessions:
-        raise ValueError(f"session_id {val_session_id} はデータ内に存在しません。available: {available_sessions}")
+    if len(available_sessions) == 1 or val_session_id == 0:
+        train_df = df.copy().reset_index(drop=True)
+        val_df = df.copy().reset_index(drop=True)
+        print(f"単一セッションデータのため全 {len(train_df)} 枚を学習・検証に使用します")
+    else:
+        if val_session_id == -1:
+            val_session_id = max(available_sessions)
+        if val_session_id not in available_sessions:
+            raise ValueError(f"session_id {val_session_id} はデータ内に存在しません。available: {available_sessions}")
 
-    train_df = df[df["session_id"] != val_session_id].reset_index(drop=True)
-    val_df = df[df["session_id"] == val_session_id].reset_index(drop=True)
-    print(f"train sessions: {[s for s in available_sessions if s != val_session_id]} ({len(train_df)}枚)")
-    print(f"val session: {val_session_id} ({len(val_df)}枚)")
+        train_df = df[df["session_id"] != val_session_id].reset_index(drop=True)
+        val_df = df[df["session_id"] == val_session_id].reset_index(drop=True)
+        print(f"train sessions: {[s for s in available_sessions if s != val_session_id]} ({len(train_df)}枚)")
+        print(f"val session: {val_session_id} ({len(val_df)}枚)")
     print(f"history_len: {args.history_len} (=履歴 {len(STICK_COLS)*args.history_len}次元を追加入力)")
 
     transform = transforms.Compose([
