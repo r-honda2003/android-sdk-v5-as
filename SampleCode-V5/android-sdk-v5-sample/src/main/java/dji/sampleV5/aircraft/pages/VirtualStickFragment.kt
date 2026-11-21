@@ -39,6 +39,7 @@ class VirtualStickFragment : DJIFragment() {
     private val autoPilotVM: MapMatchingRepeatVM by activityViewModels()
     private var binding: FragVirtualStickPageBinding? = null
     private val deviation: Double = 0.02
+    private var daggerSessionIndex: Int = 1
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -228,7 +229,70 @@ class VirtualStickFragment : DJIFragment() {
 
         binding?.btnDisableAutoPilot?.setOnClickListener {
             autoPilotVM.stopAutoPilot()
+            dji.sampleV5.aircraft.models.TelemetryLogger.stopLogging()
             ToastUtils.showToast("AutoPilot Disabled")
+        }
+
+        // --- DAgGER ワークフロー機能 ---
+        // 1回目：手動飛行 データ収集開始 (5回分セッション対応)
+        binding?.btnDaggerRecordData?.setOnClickListener {
+            val sessionId = "run1_session_$daggerSessionIndex"
+            dji.sampleV5.aircraft.models.TelemetryLogger.startLogging(requireContext(), sessionId)
+            ToastUtils.showToast("1回目: データ収集開始 (セッション $daggerSessionIndex/5)")
+            binding?.btnDaggerRecordData?.text = "録画中 ($daggerSessionIndex/5)"
+        }
+
+        // 1回目：データ収集停止
+        binding?.btnDaggerStopData?.setOnClickListener {
+            dji.sampleV5.aircraft.models.TelemetryLogger.stopLogging()
+            ToastUtils.showToast("1回目: セッション $daggerSessionIndex/5 のデータ収集を停止しました")
+            if (daggerSessionIndex < 5) {
+                daggerSessionIndex++
+            }
+            binding?.btnDaggerRecordData?.text = "1回目:データ収集開始($daggerSessionIndex/5)"
+        }
+
+        // 2回目・3回目：AI飛行 (プロポ操作で一瞬割り込み・手離せば即時自動復帰)
+        binding?.btnDaggerRunAi?.setOnClickListener {
+            autoPilotVM.isRcOverrideEnabled = true
+            autoPilotVM.startAutoPilot()
+            ToastUtils.showToast("2/3回目 AI飛行開始 (PC IP: ${autoPilotVM.pcServerIp})")
+        }
+
+        // 長押しで PC Server IP を変更設定
+        binding?.btnDaggerRunAi?.setOnLongClickListener {
+            showPcIpInputDialog()
+            true
+        }
+
+        // 4回目：AI飛行 (介入なし評価モード)
+        binding?.btnDaggerRunEval?.setOnClickListener {
+            autoPilotVM.isRcOverrideEnabled = false
+            autoPilotVM.startAutoPilot()
+            ToastUtils.showToast("4回目 AI飛行開始 (介入なし評価 / PC IP: ${autoPilotVM.pcServerIp})")
+        }
+
+        binding?.btnDaggerRunEval?.setOnLongClickListener {
+            showPcIpInputDialog()
+            true
+        }
+
+        // 緊急停止 / AI中断
+        binding?.btnDaggerEmergencyStop?.setOnClickListener {
+            autoPilotVM.stopAutoPilot()
+            dji.sampleV5.aircraft.models.TelemetryLogger.stopLogging()
+            virtualStickVM.disableVirtualStick(object : CommonCallbacks.CompletionCallback {
+                override fun onSuccess() {
+                    mainHandler.post {
+                        ToastUtils.showToast("🚨 緊急停止完了: ホバリング移行")
+                    }
+                }
+                override fun onFailure(error: IDJIError) {
+                    mainHandler.post {
+                        ToastUtils.showToast("緊急停止エラー: ${error.description()}")
+                    }
+                }
+            })
         }
         binding?.btnUseRcStick?.setOnClickListener {
             virtualStickVM.useRcStick.value = virtualStickVM.useRcStick.value != true
@@ -265,6 +329,24 @@ class VirtualStickFragment : DJIFragment() {
         binding?.btnDisableVirtualStickAdvancedMode?.setOnClickListener {
             virtualStickVM.disableVirtualStickAdvancedMode()
         }
+    }
+
+    private fun showPcIpInputDialog() {
+        val builder = android.app.AlertDialog.Builder(requireContext())
+        builder.setTitle("PC Inference Server IP 設定")
+        val input = android.widget.EditText(requireContext())
+        input.setText(autoPilotVM.pcServerIp)
+        input.setSelection(input.text.length)
+        builder.setView(input)
+        builder.setPositiveButton("保存") { _, _ ->
+            val ip = input.text.toString().trim()
+            if (ip.isNotEmpty()) {
+                autoPilotVM.pcServerIp = ip
+            }
+            ToastUtils.showToast("PC Server IP を変更しました: ${autoPilotVM.pcServerIp}")
+        }
+        builder.setNegativeButton("キャンセル", null)
+        builder.show()
     }
 
     private fun initStickListener() {

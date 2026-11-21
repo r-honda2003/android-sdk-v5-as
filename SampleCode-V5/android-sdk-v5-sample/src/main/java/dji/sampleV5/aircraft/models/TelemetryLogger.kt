@@ -38,6 +38,10 @@ object TelemetryLogger {
     private var stickRightVertical: Int? = null
     private var stickRightHorizontal: Int? = null
 
+    // DAgGER用: 人間による緊急介入（プロポ操作割り込み）中かどうか
+    @Volatile
+    var isHumanOverrideActive: Boolean = false
+
     private var lastYaw: Double? = null
     private var lastTimestamp: Long? = null
 
@@ -46,6 +50,7 @@ object TelemetryLogger {
     fun startLogging(context: Context, sessionId: String) {
         if (isRecording) return
         isRecording = true
+        isHumanOverrideActive = false
 
         lastYaw = null
         lastTimestamp = null
@@ -54,14 +59,16 @@ object TelemetryLogger {
         val fileName = "telemetry_$sessionId.csv"
         val file = File(dir, fileName)
         fileWriter = FileWriter(file, true)
-        fileWriter?.appendLine("time,image_path,vx,vy,vz,pitch,roll,yaw,lat,lng,alt,gps_signal,battery_percent,stick_left_v,stick_left_h,stick_right_v,stick_right_h,calc_stick_left_v,calc_stick_left_h,calc_stick_right_v,calc_stick_right_h,send_stick_left_v,send_stick_left_h,send_stick_right_v,send_stick_right_h")
+        fileWriter?.appendLine("time,image_path,vx,vy,vz,pitch,roll,yaw,lat,lng,alt,gps_signal,battery_percent,stick_left_v,stick_left_h,stick_right_v,stick_right_h,calc_stick_left_v,calc_stick_left_h,calc_stick_right_v,calc_stick_right_h,send_stick_left_v,send_stick_left_h,send_stick_right_v,send_stick_right_h,human_override_active")
 
         subscribeKeys()
         startPeriodicWrite()
     }
 
     fun stopLogging() {
+        if (!isRecording) return
         isRecording = false
+        isHumanOverrideActive = false
         handler?.removeCallbacksAndMessages(null)
         unsubscribeKeys()
         fileWriter?.flush()
@@ -204,8 +211,10 @@ object TelemetryLogger {
                 val sendStickRV = if (stickRV != 0) stickRV else calcStickRV
                 val sendStickRH = if (stickRH != 0) stickRH else calcStickRH
 
+                val overrideFlag = if (isHumanOverrideActive) 1 else 0
+
                 fileWriter?.appendLine(
-                    "$now,$imagePath,$vx,$vy,$vz,$pitch,$roll,$yaw,$lat,$lng,$alt,$gps,$battery,$stickLV,$stickLH,$stickRV,$stickRH,$calcStickLV,$calcStickLH,$calcStickRV,$calcStickRH,$sendStickLV,$sendStickLH,$sendStickRV,$sendStickRH"
+                    "$now,$imagePath,$vx,$vy,$vz,$pitch,$roll,$yaw,$lat,$lng,$alt,$gps,$battery,$stickLV,$stickLH,$stickRV,$stickRH,$calcStickLV,$calcStickLH,$calcStickRV,$calcStickRH,$sendStickLV,$sendStickLH,$sendStickRV,$sendStickRH,$overrideFlag"
                 )
                 fileWriter?.flush()
 

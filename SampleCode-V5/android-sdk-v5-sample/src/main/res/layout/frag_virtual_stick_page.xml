@@ -81,12 +81,57 @@
                 app:layout_constraintTop_toBottomOf="@id/btn_enable_auto_pilot" />
 
             <Button
+                android:id="@+id/btn_dagger_record_data"
+                style="@style/main_fragment_btn"
+                android:text="1回目:データ収集開始(1/5)"
+                android:textColor="@color/black"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/btn_disable_auto_pilot" />
+
+            <Button
+                android:id="@+id/btn_dagger_stop_data"
+                style="@style/main_fragment_btn"
+                android:text="データ収集停止"
+                android:textColor="@color/black"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/btn_dagger_record_data" />
+
+            <Button
+                android:id="@+id/btn_dagger_run_ai"
+                style="@style/main_fragment_btn"
+                android:text="2/3回目:AI飛行(介入有効)"
+                android:textColor="@color/black"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/btn_dagger_stop_data" />
+
+            <Button
+                android:id="@+id/btn_dagger_run_eval"
+                style="@style/main_fragment_btn"
+                android:text="4回目:AI飛行(評価/介入無)"
+                android:textColor="@color/black"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/btn_dagger_run_ai" />
+
+            <Button
+                android:id="@+id/btn_dagger_emergency_stop"
+                style="@style/main_fragment_btn"
+                android:text="🚨 緊急停止 / AI中断"
+                android:textColor="@color/red"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/btn_dagger_run_eval" />
+
+            <Button
                 android:id="@+id/btn_use_rc_stick"
                 style="@style/main_fragment_btn"
                 android:text="@string/btn_use_rc_stick_value"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintTop_toBottomOf="@id/btn_disable_auto_pilot" />
+                app:layout_constraintTop_toBottomOf="@id/btn_dagger_emergency_stop" />
 
 
             <Button

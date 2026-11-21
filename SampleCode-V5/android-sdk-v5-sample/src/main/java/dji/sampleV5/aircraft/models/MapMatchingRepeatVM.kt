@@ -64,6 +64,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
 
     var pcServerIp: String = "192.168.13.14"
     var isPcInferenceMode: Boolean = true
+    var isRcOverrideEnabled: Boolean = true // DAgGER用: プロポ操作による手動割り込みを有効化 (2回目/3回目)
 
     fun initAutoPilot(context: Context, imageDirName: String) {
         Log.e(TAG, "=== DEBUG: initAutoPilot START ===")
@@ -241,13 +242,26 @@ class MapMatchingRepeatVM : DJIViewModel() {
                     intArrayOf(0, 0, 350, 0)
                 }
 
-                // 5. スティック値計算 ＆ 確実な前進力確保
+                // 5. プロポ（RC）割り込み＆スティック値計算
+                val rcLeftH = KeyManager.getInstance().getValue(KeyTools.createKey(dji.sdk.keyvalue.key.RemoteControllerKey.KeyStickLeftHorizontal)) ?: 0
+                val rcLeftV = KeyManager.getInstance().getValue(KeyTools.createKey(dji.sdk.keyvalue.key.RemoteControllerKey.KeyStickLeftVertical)) ?: 0
+                val rcRightH = KeyManager.getInstance().getValue(KeyTools.createKey(dji.sdk.keyvalue.key.RemoteControllerKey.KeyStickRightHorizontal)) ?: 0
+                val rcRightV = KeyManager.getInstance().getValue(KeyTools.createKey(dji.sdk.keyvalue.key.RemoteControllerKey.KeyStickRightVertical)) ?: 0
+
+                val OVERRIDE_THRESHOLD = 100
+                val isHumanOverriding = isRcOverrideEnabled && (
+                    Math.abs(rcLeftH) > OVERRIDE_THRESHOLD ||
+                    Math.abs(rcLeftV) > OVERRIDE_THRESHOLD ||
+                    Math.abs(rcRightH) > OVERRIDE_THRESHOLD ||
+                    Math.abs(rcRightV) > OVERRIDE_THRESHOLD
+                )
+                TelemetryLogger.isHumanOverrideActive = isHumanOverriding
+
                 val maxPitchStick = 450 // 直進時の最高前進スティック上限値を力強い450に強化
                 val maxYawStick = 450   // 旋回時の最高ラダースティック上限値 (450)
 
-                val sendLV = rawSticks[0].coerceIn(-660, 660)
-                val sendLH = rawSticks[1].coerceIn(-maxYawStick, maxYawStick)
-                val sendRH = 0
+                val aiSendLV = rawSticks[0].coerceIn(-660, 660)
+                val aiSendLH = rawSticks[1].coerceIn(-maxYawStick, maxYawStick)
 
                 // 角度（Yaw）のズレ計算（絶対方位角同士で正しく比較）
                 val attitude = KeyManager.getInstance().getValue(KeyTools.createKey(FlightControllerKey.KeyAircraftAttitude))
@@ -259,20 +273,27 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 while (yawDiff < -180.0) yawDiff += 360.0
 
                 // スタート初期 (Frame 15コマ / 約3秒) は回転せずに直進最優先！
-                val finalLH = if (currentFrameIndex < 15) {
+                val aiFinalLH = if (currentFrameIndex < 15) {
                     0
                 } else if (Math.abs(yawDiff) >= 30.0) {
                     val guardYawStick = (yawDiff * 10.0).toInt().coerceIn(-400, 400)
                     Log.d(TAG, "Yaw Angle Guard Active: diff=${String.format("%.1f", yawDiff)}°, sendLH=$guardYawStick")
                     guardYawStick
                 } else {
-                    sendLH
+                    aiSendLH
                 }
 
-                // 前進力(RV)の計算 (十分な推力を保証)
-                val sendRV = (rawSticks[2] * (maxPitchStick / 660.0)).toInt().coerceIn(200, maxPitchStick)
+                // 前進力(RV)および左右スライド(RH)の計算
+                val aiSendRV = (rawSticks[2] * (maxPitchStick / 660.0)).toInt().coerceIn(200, maxPitchStick)
+                val aiSendRH = rawSticks[3].coerceIn(-450, 450)
 
-                predictedSticks.postValue(rawSticks)
+                // 人間介入中であればプロポ入力を適用、手を離せば即座にAI推論値に自動復帰
+                val sendLV = if (isHumanOverriding) rcLeftV else aiSendLV
+                val finalLH = if (isHumanOverriding) rcLeftH else aiFinalLH
+                val sendRV = if (isHumanOverriding) rcRightV else aiSendRV
+                val sendRH = if (isHumanOverriding) rcRightH else aiSendRH
+
+                predictedSticks.postValue(if (isHumanOverriding) intArrayOf(rcLeftV, rcLeftH, rcRightV, rcRightH) else rawSticks)
                 val totalLoopTimeMs = System.currentTimeMillis() - loopStartTime
 
                 val percentStr = if (totalPlanDistance > 0) {
@@ -282,7 +303,10 @@ class MapMatchingRepeatVM : DJIViewModel() {
                     "Dist: ${String.format(java.util.Locale.US, "%.1f", currentCumDistance)}m"
                 }
 
+                val overrideStatusTag = if (isHumanOverriding) "⚠️【人間介入中 (RC Override)】" else "🤖【AI自動飛行中】"
+
                 statusMessage.postValue(
+                    "$overrideStatusTag " +
                     (if (isPcInferenceMode) "[PC Inference] " else "[Local Inference] ") +
                     (if (isPureE2EMode) "Pure E2E Active" else "AutoPilot Active") +
                     " | " + percentStr + "\n" +
@@ -306,7 +330,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
                     vsParam.rollPitchControlMode = dji.sdk.keyvalue.value.flightcontroller.RollPitchControlMode.ANGLE
                     vsParam.pitch = (sendRV.toDouble() / 660.0) * 15.0 // 前傾ピッチ角 (前進推力)
                     vsParam.yaw = (finalLH.toDouble() / 660.0) * 90.0   // 旋回角速度 (deg/s)
-                    vsParam.roll = 0.0
+                    vsParam.roll = (sendRH.toDouble() / 660.0) * 15.0  // 左右傾き角 (左右回避推力)
                     vsParam.verticalThrottle = 0.0
 
                     VirtualStickManager.getInstance().sendVirtualStickAdvancedParam(vsParam)
@@ -314,14 +338,15 @@ class MapMatchingRepeatVM : DJIViewModel() {
                     Log.e(TAG, "Failed to send stick positions: ${e.message}")
                 }
 
-                // 7. CSVログへの即時保存 (AI推論値, 送信スティック値[-660~660], 推論時間ms, ループ処理時間ms)
+                // 7. CSVログへの即時保存 (AI推論値, 送信スティック値[-660~660], 推論時間ms, ループ処理時間ms, 人間介入フラグ)
                 try {
+                    val overrideVal = if (isHumanOverriding) 1 else 0
                     logFileWriter?.appendLine(
                         "$now,${String.format(java.util.Locale.US, "%.2f", currentCumDistance)}," +
                         "${rawSticks[0]},${rawSticks[1]},${rawSticks[2]},${rawSticks[3]}," +
                         "$sendLV,$finalLH,$sendRV,$sendRH," +
                         "$lastInferenceTimeMs,$totalLoopTimeMs,${refEntry?.imagePath ?: ""}," +
-                        "${attitude?.pitch ?: 0.0},${attitude?.roll ?: 0.0},${attitude?.yaw ?: 0.0}"
+                        "${attitude?.pitch ?: 0.0},${attitude?.roll ?: 0.0},${attitude?.yaw ?: 0.0},$overrideVal"
                     )
                     logFileWriter?.flush()
                 } catch (e: Throwable) {
@@ -346,7 +371,6 @@ class MapMatchingRepeatVM : DJIViewModel() {
                     Log.d(TAG, "Goal reached! Total distance: ${totalPlanDistance}m. Stopping AutoPilot.")
                     statusMessage.postValue("🎉 Goal Reached! AutoPilot Completed (${String.format(java.util.Locale.US, "%.1f", totalPlanDistance)}m)")
                     stopAutoPilot()
-                }
                 }
             }
         }
