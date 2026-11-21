@@ -62,7 +62,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
     private var logFileWriter: java.io.FileWriter? = null
     private var lastInferenceTimeMs: Long = 0L
 
-    var pcServerIp: String = "192.168.1.100"
+    var pcServerIp: String = "192.168.13.14"
     var isPcInferenceMode: Boolean = true
 
     fun initAutoPilot(context: Context, imageDirName: String) {
