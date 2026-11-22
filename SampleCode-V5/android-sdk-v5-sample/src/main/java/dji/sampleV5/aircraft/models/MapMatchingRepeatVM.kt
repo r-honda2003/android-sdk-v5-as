@@ -264,13 +264,13 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 )
                 TelemetryLogger.isHumanOverrideActive = isHumanOverriding
 
-                val maxPitchStick = 450 // 直進時の最高前進スティック上限値を力強い450に強化
-                val maxYawStick = 450   // 旋回時の最高ラダースティック上限値 (450)
-
+                // 完全E2Eモード: MobileNet等のAI出力をルールベースで補助・変更せず、±660の範囲にclampするだけでそのまま送信
                 val aiSendLV = rawSticks[0].coerceIn(-660, 660)
-                val aiSendLH = rawSticks[1].coerceIn(-maxYawStick, maxYawStick)
+                val aiFinalLH = rawSticks[1].coerceIn(-660, 660)
+                val aiSendRV = rawSticks[2].coerceIn(-660, 660)
+                val aiSendRH = rawSticks[3].coerceIn(-660, 660)
 
-                // 角度（Yaw）のズレ計算（絶対方位角同士で正しく比較）
+                // 角度（Yaw）のズレ計算（モニタリング・ログ用）
                 val attitude = KeyManager.getInstance().getValue(KeyTools.createKey(FlightControllerKey.KeyAircraftAttitude))
                 val currentYaw = attitude?.yaw ?: startYaw
                 val refYaw = refEntry?.yaw ?: currentYaw
@@ -278,21 +278,6 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 var yawDiff = refYaw - currentYaw
                 while (yawDiff > 180.0) yawDiff -= 360.0
                 while (yawDiff < -180.0) yawDiff += 360.0
-
-                // スタート初期 (Frame 15コマ / 約3秒) は回転せずに直進最優先！
-                val aiFinalLH = if (currentFrameIndex < 15) {
-                    0
-                } else if (Math.abs(yawDiff) >= 30.0) {
-                    val guardYawStick = (yawDiff * 10.0).toInt().coerceIn(-400, 400)
-                    Log.d(TAG, "Yaw Angle Guard Active: diff=${String.format("%.1f", yawDiff)}°, sendLH=$guardYawStick")
-                    guardYawStick
-                } else {
-                    aiSendLH
-                }
-
-                // 前進力(RV)および左右スライド(RH)の計算
-                val aiSendRV = (rawSticks[2] * (maxPitchStick / 660.0)).toInt().coerceIn(200, maxPitchStick)
-                val aiSendRH = rawSticks[3].coerceIn(-450, 450)
 
                 // 人間介入中であればプロポ入力を適用、手を離せば即座にAI推論値に自動復帰
                 val sendLV = if (isHumanOverriding) rcLeftV else aiSendLV
@@ -310,10 +295,14 @@ class MapMatchingRepeatVM : DJIViewModel() {
                     "Dist: ${String.format(java.util.Locale.US, "%.1f", currentCumDistance)}m"
                 }
 
-                val overrideStatusTag = if (isHumanOverriding) "⚠️【人間介入中 (RC Override)】" else "🤖【AI自動飛行中】"
+                val overrideStatusTag = if (isHumanOverriding) "⚠️【人間介入中 (RC Override)】" else "🤖【完全E2E AI自動飛行中】"
 
                 statusMessage.postValue(
                     "$overrideStatusTag " +
+                    (if (isPcInferenceMode) "[PC Inference] " else "[Local Inference] ") +
+                    (if (isPureE2EMode) "Pure E2E Active" else "AutoPilot Active") +
+                    " | " + percentStr + "\n" +
+                    "【送信命令(Stick)】LV:$sendLV LH:$finalLH RV:$sendRV RH:$sendRH\n" +
                     (if (isPcInferenceMode) "[PC Inference] " else "[Local Inference] ") +
                     (if (isPureE2EMode) "Pure E2E Active" else "AutoPilot Active") +
                     " | " + percentStr + "\n" +
