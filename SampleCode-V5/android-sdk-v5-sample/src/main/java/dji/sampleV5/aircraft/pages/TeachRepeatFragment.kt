@@ -145,7 +145,8 @@ class TeachRepeatFragment : DJIFragment() {
 
         // 1. Teach Mode
         binding?.btnStartTeach?.setOnClickListener {
-            val sessionId = "run1_session_$sessionIndex"
+            val dateStr = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date())
+            val sessionId = "${dateStr}_run1_session_$sessionIndex"
             TelemetryLogger.startLogging(requireContext(), sessionId)
             dji.sampleV5.aircraft.models.ImageLogger.startLogging(requireContext(), sessionId)
             isTeachRecording = true

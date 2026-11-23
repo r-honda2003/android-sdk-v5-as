@@ -236,7 +236,8 @@ class VirtualStickFragment : DJIFragment() {
         // --- DAgGER ワークフロー機能 ---
         // 1回目：手動飛行 データ収集開始 (5回分セッション対応)
         binding?.btnDaggerRecordData?.setOnClickListener {
-            val sessionId = "run1_session_$daggerSessionIndex"
+            val dateStr = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date())
+            val sessionId = "${dateStr}_run1_session_$daggerSessionIndex"
             dji.sampleV5.aircraft.models.TelemetryLogger.startLogging(requireContext(), sessionId)
             dji.sampleV5.aircraft.models.ImageLogger.startLogging(requireContext(), sessionId)
             ToastUtils.showToast("1回目: データ収集開始 (セッション $daggerSessionIndex/5)")

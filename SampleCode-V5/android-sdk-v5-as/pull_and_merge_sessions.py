@@ -99,8 +99,9 @@ def merge_sessions(run_prefix: str, output_csv: str, output_img_dir: str):
         if ts_csvs:
             local_csvs.insert(0, ts_csvs[0])
 
-    if not local_csvs:
-        local_csvs = sorted(glob.glob("telemetry_20*.csv"))
+    # 介入飛行（Repeat時の手動割り込み）などの追加タイムスタンプ付きCSVも含める (今日のデータのみ)
+    extra_csvs = [f for f in sorted(glob.glob("telemetry_20261123_*.csv")) if f not in local_csvs and f not in ["telemetry_with_sessions.csv", "matched_telemetry.csv"]]
+    local_csvs.extend(extra_csvs)
 
     if not local_csvs:
         raise FileNotFoundError(f"マージ対象のテレメトリCSVが見つかりません。")

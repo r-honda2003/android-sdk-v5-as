@@ -92,7 +92,8 @@ fi
 # 7. 画像ディレクトリをAndroid端末の外部ストレージ領域へ転送 (adb push)
 cd "$SCRIPT_DIR"
 echo -e "\n[Step 7] Pushing $IMAGES_DIR to Android device ..."
-adb push "$IMAGES_DIR" /sdcard/Android/data/dji.sampleV5.aircraft/files/
+adb push "$IMAGES_DIR" /sdcard/Android/data/com.dji.sampleV5.aircraft/files/ || true
+adb push "$IMAGES_DIR" /sdcard/Android/data/dji.sampleV5.aircraft/files/ || true
 
 echo -e "\n=========================================="
 echo " Pipeline Finished Successfully!"

@@ -146,9 +146,6 @@ abstract class DJIMainActivity : AppCompatActivity() {
                 ToastUtils.showToast("Register Success")
                 statusText = StringUtils.getResStr(this, R.string.registered)
                 msdkInfoVm.initListener()
-                val sessionId = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-                TelemetryLogger.startLogging(this, sessionId)
-                ImageLogger.startLogging(this, sessionId)
                 handler.postDelayed({
                     prepareUxActivity()
                 }, 5000)

@@ -48,7 +48,9 @@ object TelemetryLogger {
     private val listenerId = this
 
     fun startLogging(context: Context, sessionId: String) {
-        if (isRecording) return
+        if (isRecording) {
+            stopLogging()
+        }
         isRecording = true
         isHumanOverrideActive = false
 
