@@ -6,18 +6,19 @@ export BOTTLENECK_DISABLE=1
 export NUMEXPR_MAX_THREADS=1
 
 # パラメータ設定 (コマンドライン引数で上書き可能)
-# 使い方: ./run_pipeline_e2e.sh [TELEMETRY_CSV] [IMAGES_DIR] [EPOCHS] [EXCLUDE_SESSIONS]
+# 使い方: ./run_pipeline_e2e.sh [TELEMETRY_CSV] [IMAGES_DIR] [EPOCHS] [EXCLUDE_SESSIONS] [RUN_PREFIX]
 TELEMETRY_CSV="${1:-telemetry_with_sessions.csv}"
 IMAGES_DIR="${2:-images_run1}"
 EPOCHS="${3:-10}"
 EXCLUDE_SESSIONS="${4:-}"
+RUN_PREFIX="${5:-run1}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # 0. 端末からの自動取得＆統合 (分割記録されたセッションの自動マージ)
-echo -e "\n[Step 0] Pulling & Merging sessions from device if available ..."
-python3 pull_and_merge_sessions.py --output_csv "$TELEMETRY_CSV" --output_img_dir "$IMAGES_DIR" || true
+echo -e "\n[Step 0] Pulling & Merging sessions ($RUN_PREFIX) from device if available ..."
+python3 pull_and_merge_sessions.py --run_prefix "$RUN_PREFIX" --output_csv "$TELEMETRY_CSV" --output_img_dir "$IMAGES_DIR" || true
 
 EXCLUDE_ARG=""
 if [ -n "$EXCLUDE_SESSIONS" ]; then

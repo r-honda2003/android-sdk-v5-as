@@ -70,18 +70,20 @@ def pull_from_device(run_prefix: str, output_img_dir: str):
     device_path = "/sdcard/Android/data/com.dji.sampleV5.aircraft/files"
     print(f"=== [ADB] 端末からのデータ取得を開始: {device_path} ===")
 
-    code, out, _ = run_cmd(f"adb shell 'ls {device_path}/telemetry_*_{run_prefix}_session_*.csv {device_path}/telemetry_{run_prefix}_session_*.csv 2>/dev/null'")
+    cmd_csv = f"adb shell 'ls {device_path}/telemetry_*.csv 2>/dev/null'"
+    code, out, _ = run_cmd(cmd_csv)
     if code == 0 and out:
-        remote_csvs = [line.strip() for line in out.splitlines() if line.strip()]
+        remote_csvs = sorted(list(set([line.strip() for line in out.splitlines() if line.strip() and "autopilot_exec" not in line and "mobilenet_control" not in line])))
         for r_csv in remote_csvs:
             print(f"  Pulling CSV: {r_csv}")
             run_cmd(f"adb pull '{r_csv}' .")
     else:
-        print("  端末上に最新のセッションファイルが見つかりませんでした。")
+        print(f"  端末上にセッションファイルが見つかりませんでした。")
 
-    code, out, _ = run_cmd(f"adb shell 'ls -d {device_path}/images_*_{run_prefix}_session_* {device_path}/images_{run_prefix}_session_* 2>/dev/null'")
+    cmd_img = f"adb shell 'ls -d {device_path}/images_* 2>/dev/null'"
+    code, out, _ = run_cmd(cmd_img)
     if code == 0 and out:
-        remote_img_dirs = [line.strip() for line in out.splitlines() if line.strip()]
+        remote_img_dirs = sorted(list(set([line.strip() for line in out.strip().splitlines() if line.strip() and "images_run1" not in line])))
         for r_dir in remote_img_dirs:
             print(f"  Pulling Image Directory: {r_dir}")
             run_cmd(f"adb pull '{r_dir}' .")
@@ -90,17 +92,9 @@ def pull_from_device(run_prefix: str, output_img_dir: str):
 def merge_sessions(run_prefix: str, output_csv: str, output_img_dir: str):
     os.makedirs(output_img_dir, exist_ok=True)
 
-    local_csvs = sorted(glob.glob(f"telemetry_*_{run_prefix}_session_*.csv") + glob.glob(f"telemetry_{run_prefix}_session_*.csv"), key=extract_session_num)
-
-    has_session_1 = any(extract_session_num(f) == 1 for f in local_csvs)
-    if not has_session_1:
-        ts_csvs = sorted(glob.glob("telemetry_20261123_103615.csv")) or sorted(glob.glob("telemetry_20*.csv"))
-        if ts_csvs:
-            local_csvs.insert(0, ts_csvs[0])
-
-    # 介入飛行（Repeat時の手動割り込み）などの追加タイムスタンプ付きCSVも含める (今日のデータのみ)
-    extra_csvs = [f for f in sorted(glob.glob("telemetry_20261123_*.csv")) if f not in local_csvs and f not in ["telemetry_with_sessions.csv", "matched_telemetry.csv"]]
-    local_csvs.extend(extra_csvs)
+    all_csvs = set(glob.glob("telemetry_*.csv"))
+    exclude_files = {output_csv, "matched_telemetry.csv", "combined_telemetry.csv", "autopilot_latest.csv"}
+    local_csvs = [f for f in sorted(list(all_csvs)) if f not in exclude_files and not f.startswith("autopilot_exec") and not f.startswith("mobilenet_control")]
 
     if not local_csvs:
         raise FileNotFoundError(f"マージ対象のテレメトリCSVが見つかりません。")

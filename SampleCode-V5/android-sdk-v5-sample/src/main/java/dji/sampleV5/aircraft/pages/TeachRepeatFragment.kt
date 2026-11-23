@@ -31,7 +31,8 @@ class TeachRepeatFragment : DJIFragment() {
     private val virtualStickVM: VirtualStickVM by activityViewModels()
     private val autoPilotVM: MapMatchingRepeatVM by activityViewModels()
 
-    private var sessionIndex = 1
+    private var teachSessionIndex = 1
+    private var repeatSessionIndex = 1
     private var isTeachRecording = false
 
     private var surface: Surface? = null
@@ -200,24 +201,22 @@ class TeachRepeatFragment : DJIFragment() {
                 override fun onSuccess() {}
                 override fun onFailure(error: IDJIError) {}
             })
-            val dateStr = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date())
-            val sessionId = "${dateStr}_run1_session_$sessionIndex"
+            val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
+            val sessionId = "${timestamp}_teach_session_$teachSessionIndex"
             TelemetryLogger.startLogging(requireContext(), sessionId)
             dji.sampleV5.aircraft.models.ImageLogger.startLogging(requireContext(), sessionId)
             isTeachRecording = true
-            binding?.tvTeachStatus?.text = "Teach Recording: Running (Session $sessionIndex/5)\nData saving to: $sessionId"
-            ToastUtils.showToast("Teach Mode 録画開始 (Session $sessionIndex/5) - プロポ操作有効")
+            binding?.tvTeachStatus?.text = "Teach Recording: Running (Teach #$teachSessionIndex)\nSaving: telemetry_$sessionId.csv"
+            ToastUtils.showToast("Teach Mode 録画開始 (Teach #$teachSessionIndex) - プロポ操作有効")
         }
 
         binding?.btnStopTeach?.setOnClickListener {
             TelemetryLogger.stopLogging()
             dji.sampleV5.aircraft.models.ImageLogger.stopLogging()
             isTeachRecording = false
-            ToastUtils.showToast("Teach Mode 録画停止 (Session $sessionIndex/5)")
-            if (sessionIndex < 5) {
-                sessionIndex++
-            }
-            binding?.tvTeachStatus?.text = "Teach Recording: Stopped\nNext Session: $sessionIndex/5"
+            ToastUtils.showToast("Teach Mode 録画停止 (Teach #$teachSessionIndex 完了)")
+            teachSessionIndex++
+            binding?.tvTeachStatus?.text = "Teach Recording: Stopped\nNext Teach: #$teachSessionIndex"
         }
 
         // 2. Repeat Mode
@@ -228,16 +227,38 @@ class TeachRepeatFragment : DJIFragment() {
             }
             autoPilotVM.isRcOverrideEnabled = true
             autoPilotVM.isPcInferenceMode = true
+
+            // DAgGER用: Repeat飛行中（AI飛行＋人間介入）もテレメトリとカメラ画像を独自タイムスタンプで自動録画する
+            val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
+            val sessionId = "${timestamp}_repeat_session_$repeatSessionIndex"
+            TelemetryLogger.startLogging(requireContext(), sessionId)
+            dji.sampleV5.aircraft.models.ImageLogger.startLogging(requireContext(), sessionId)
+
             autoPilotVM.startAutoPilot(requireContext().applicationContext)
-            ToastUtils.showToast("Repeat Mode 起動 (PC: ${autoPilotVM.pcServerIp})")
+            ToastUtils.showToast("Repeat Mode 起動 (Repeat #$repeatSessionIndex / PC: ${autoPilotVM.pcServerIp})")
+            binding?.tvRepeatStatus?.text = "Repeat Flight: Running (Repeat #$repeatSessionIndex)\nSaving: telemetry_$sessionId.csv"
         }
 
         binding?.btnStopRepeat?.setOnClickListener {
             autoPilotVM.stopAutoPilot()
             TelemetryLogger.stopLogging()
-            ToastUtils.showToast("Repeat Mode 停止")
-            binding?.tvRepeatStatus?.text = "Repeat Flight: Stopped\nServer: ${autoPilotVM.pcServerIp}"
+            dji.sampleV5.aircraft.models.ImageLogger.stopLogging()
+            ToastUtils.showToast("Repeat Mode 停止 (Repeat #$repeatSessionIndex 録画完了)")
+            repeatSessionIndex++
+            binding?.tvRepeatStatus?.text = "Repeat Flight: Stopped\nNext Repeat: #$repeatSessionIndex"
         }
+
+        // ステータステキスト長押しでセッションカウントを 1 にリセット
+        val resetSessionListener = View.OnLongClickListener {
+            teachSessionIndex = 1
+            repeatSessionIndex = 1
+            binding?.tvTeachStatus?.text = "Teach Recording: Stopped\nNext Teach: #1"
+            binding?.tvRepeatStatus?.text = "Repeat Flight: Stopped\nNext Repeat: #1"
+            ToastUtils.showToast("セッションカウントを 1 にリセットしました")
+            true
+        }
+        binding?.tvTeachStatus?.setOnLongClickListener(resetSessionListener)
+        binding?.tvRepeatStatus?.setOnLongClickListener(resetSessionListener)
     }
 
     private var rcRoll = 0
