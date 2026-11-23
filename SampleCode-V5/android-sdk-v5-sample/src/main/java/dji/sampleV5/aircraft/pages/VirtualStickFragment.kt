@@ -411,6 +411,9 @@ class VirtualStickFragment : DJIFragment() {
         if (!isAdded || binding == null) return
 
         val builder = StringBuilder()
+        val currentAlt = dji.v5.manager.KeyManager.getInstance().getValue(dji.sdk.keyvalue.key.KeyTools.createKey(dji.sdk.keyvalue.key.FlightControllerKey.KeyAltitude)) ?: 0.0
+        builder.append("Current Altitude: ").append(String.format(java.util.Locale.US, "%.2f m", currentAlt))
+        builder.append("\n")
         builder.append("Speed level:").append(virtualStickVM.currentSpeedLevel.value)
         builder.append("\n")
         builder.append("Use rc stick as virtual stick:").append(virtualStickVM.useRcStick.value)

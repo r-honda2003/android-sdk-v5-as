@@ -70,7 +70,7 @@ def pull_from_device(run_prefix: str, output_img_dir: str):
     device_path = "/sdcard/Android/data/com.dji.sampleV5.aircraft/files"
     print(f"=== [ADB] 端末からのデータ取得を開始: {device_path} ===")
 
-    code, out, _ = run_cmd(f"adb shell 'ls {device_path}/telemetry_{run_prefix}_session_*.csv {device_path}/telemetry_20261123_*.csv 2>/dev/null'")
+    code, out, _ = run_cmd(f"adb shell 'ls {device_path}/telemetry_*_{run_prefix}_session_*.csv {device_path}/telemetry_{run_prefix}_session_*.csv 2>/dev/null'")
     if code == 0 and out:
         remote_csvs = [line.strip() for line in out.splitlines() if line.strip()]
         for r_csv in remote_csvs:
@@ -79,7 +79,7 @@ def pull_from_device(run_prefix: str, output_img_dir: str):
     else:
         print("  端末上に最新のセッションファイルが見つかりませんでした。")
 
-    code, out, _ = run_cmd(f"adb shell 'ls -d {device_path}/images_{run_prefix}_session_* {device_path}/images_20261123_* 2>/dev/null'")
+    code, out, _ = run_cmd(f"adb shell 'ls -d {device_path}/images_*_{run_prefix}_session_* {device_path}/images_{run_prefix}_session_* 2>/dev/null'")
     if code == 0 and out:
         remote_img_dirs = [line.strip() for line in out.splitlines() if line.strip()]
         for r_dir in remote_img_dirs:
@@ -90,8 +90,7 @@ def pull_from_device(run_prefix: str, output_img_dir: str):
 def merge_sessions(run_prefix: str, output_csv: str, output_img_dir: str):
     os.makedirs(output_img_dir, exist_ok=True)
 
-    csv_pattern = f"telemetry_{run_prefix}_session_*.csv"
-    local_csvs = sorted(glob.glob(csv_pattern), key=extract_session_num)
+    local_csvs = sorted(glob.glob(f"telemetry_*_{run_prefix}_session_*.csv") + glob.glob(f"telemetry_{run_prefix}_session_*.csv"), key=extract_session_num)
 
     has_session_1 = any(extract_session_num(f) == 1 for f in local_csvs)
     if not has_session_1:

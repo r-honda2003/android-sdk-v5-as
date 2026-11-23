@@ -12,6 +12,7 @@ import dji.sampleV5.aircraft.models.BasicAircraftControlVM
 import dji.sampleV5.aircraft.models.MapMatchingRepeatVM
 import dji.sampleV5.aircraft.models.TelemetryLogger
 import dji.sampleV5.aircraft.models.VirtualStickVM
+import dji.sdk.keyvalue.key.FlightControllerKey
 import dji.sdk.keyvalue.key.KeyTools
 import dji.sdk.keyvalue.key.RemoteControllerKey
 import dji.sdk.keyvalue.value.common.ComponentIndexType
@@ -143,15 +144,69 @@ class TeachRepeatFragment : DJIFragment() {
             })
         }
 
+        // Climb to 1.7m
+        binding?.btnClimbToTargetAltitude?.setOnClickListener {
+            ToastUtils.showToast("指定高度 (1.7m) へ上昇制御を開始します...")
+            virtualStickVM.climbToAltitude(1.7, object : CommonCallbacks.CompletionCallback {
+                override fun onSuccess() {
+                    mainHandler.post {
+                        ToastUtils.showToast("指定高度 (1.7m) に到達しました！")
+                    }
+                }
+
+                override fun onFailure(error: IDJIError) {
+                    mainHandler.post {
+                        ToastUtils.showToast("指定高度上昇完了/停止: ${error.description()}")
+                    }
+                }
+            })
+        }
+
+        binding?.btnClimbToTargetAltitude?.setOnLongClickListener {
+            val builder = android.app.AlertDialog.Builder(requireContext())
+            builder.setTitle("目標高度の設定 (m)")
+            val input = android.widget.EditText(requireContext())
+            input.setText("1.7")
+            input.setSelection(input.text.length)
+            input.inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            builder.setView(input)
+            builder.setPositiveButton("上昇開始") { _, _ ->
+                val altStr = input.text.toString().trim()
+                val targetAlt = altStr.toDoubleOrNull() ?: 1.7
+                ToastUtils.showToast("指定高度 (${targetAlt}m) へ上昇制御を開始します...")
+                virtualStickVM.climbToAltitude(targetAlt, object : CommonCallbacks.CompletionCallback {
+                    override fun onSuccess() {
+                        mainHandler.post {
+                            ToastUtils.showToast("指定高度 (${targetAlt}m) に到達しました！")
+                        }
+                    }
+
+                    override fun onFailure(error: IDJIError) {
+                        mainHandler.post {
+                            ToastUtils.showToast("高度制御完了/停止: ${error.description()}")
+                        }
+                    }
+                })
+            }
+            builder.setNegativeButton("キャンセル", null)
+            builder.show()
+            true
+        }
+
         // 1. Teach Mode
         binding?.btnStartTeach?.setOnClickListener {
+            // プロポ（RC）物理スティックによる手動飛行権限を確定するため、VirtualStickを確実に無効化
+            virtualStickVM.disableVirtualStick(object : CommonCallbacks.CompletionCallback {
+                override fun onSuccess() {}
+                override fun onFailure(error: IDJIError) {}
+            })
             val dateStr = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date())
             val sessionId = "${dateStr}_run1_session_$sessionIndex"
             TelemetryLogger.startLogging(requireContext(), sessionId)
             dji.sampleV5.aircraft.models.ImageLogger.startLogging(requireContext(), sessionId)
             isTeachRecording = true
             binding?.tvTeachStatus?.text = "Teach Recording: Running (Session $sessionIndex/5)\nData saving to: $sessionId"
-            ToastUtils.showToast("Teach Mode 録画開始 (Session $sessionIndex/5)")
+            ToastUtils.showToast("Teach Mode 録画開始 (Session $sessionIndex/5) - プロポ操作有効")
         }
 
         binding?.btnStopTeach?.setOnClickListener {
@@ -189,9 +244,19 @@ class TeachRepeatFragment : DJIFragment() {
     private var rcPitch = 0
     private var rcYaw = 0
     private var rcThrottle = 0
+    private var currentAltitude = 0.0
 
     private fun subscribeRcSticks() {
         val listenerId = this
+
+        val altitudeKey = KeyTools.createKey(FlightControllerKey.KeyAltitude)
+        KeyManager.getInstance().listen(altitudeKey, listenerId) { _, valAlt ->
+            currentAltitude = valAlt ?: 0.0
+            mainHandler.post {
+                binding?.tvAircraftAltitude?.text = "現在高度 (Altitude): ${String.format(java.util.Locale.US, "%.2f", currentAltitude)} m"
+            }
+        }
+
         val stickLH = KeyTools.createKey(RemoteControllerKey.KeyStickLeftHorizontal)
         KeyManager.getInstance().listen(stickLH, listenerId) { _, valH ->
             rcYaw = valH ?: 0

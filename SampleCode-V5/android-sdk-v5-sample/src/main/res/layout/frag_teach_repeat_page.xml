@@ -182,6 +182,30 @@
                     android:textStyle="bold" />
             </LinearLayout>
 
+            <Button
+                android:id="@+id/btn_climb_to_target_altitude"
+                android:layout_width="match_parent"
+                android:layout_height="36dp"
+                android:layout_marginTop="4dp"
+                android:backgroundTint="#9C27B0"
+                android:text="CLIMB TO 1.7M (指定高度上昇)"
+                android:textColor="#FFFFFF"
+                android:textSize="10sp"
+                android:textStyle="bold" />
+
+            <!-- Aircraft State (Altitude) -->
+            <TextView
+                android:id="@+id/tv_aircraft_altitude"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="#2A2A3C"
+                android:padding="6dp"
+                android:text="現在高度 (Altitude): 0.00 m"
+                android:textColor="#00E676"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
             <!-- Row 2: RC Stick Status -->
             <TextView
                 android:layout_width="wrap_content"
