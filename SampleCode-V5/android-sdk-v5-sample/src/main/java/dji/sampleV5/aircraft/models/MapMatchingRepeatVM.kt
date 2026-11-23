@@ -70,36 +70,11 @@ class MapMatchingRepeatVM : DJIViewModel() {
         Log.e(TAG, "=== DEBUG: initAutoPilot START ===")
         statusMessage.postValue("Initializing AutoPilot...")
         logFileDir = context.getExternalFilesDir(null)
-        // Load Plan (If plan.csv missing, fallback to Pure E2E Mode)
-        try {
-            val planList = mutableListOf<PlanEntry>()
-            context.assets.open("plan.csv").bufferedReader().use { reader ->
-                reader.readLine() // Skip header
-                reader.forEachLine { line ->
-                    val cols = line.split(",")
-                    if (cols.size >= 6) {
-                        val yawVal = if (cols.size > 9) cols[9].toDoubleOrNull() ?: 0.0 else 0.0
-                        planList.add(PlanEntry(
-                            time = cols[1].toLong(),
-                            imagePath = cols[2],
-                            cumDistanceM = cols[5].toDouble(),
-                            yaw = yawVal
-                        ))
-                    }
-                }
-            }
-            plan = planList.sortedBy { it.cumDistanceM }
-            totalPlanDistance = plan.lastOrNull()?.cumDistanceM ?: 0.0
-            isPureE2EMode = false
-            Log.e(TAG, "=== DEBUG: Plan loaded successfully (${plan.size} entries) ===")
-            statusMessage.postValue("Plan OK: ${plan.size} frames (${String.format("%.1f", totalPlanDistance)}m)")
-        } catch (e: Throwable) {
-            Log.d(TAG, "No plan.csv found or plan load error. Activating Pure E2E Mode: $e")
-            isPureE2EMode = true
-            plan = emptyList()
-            totalPlanDistance = 0.0
-            statusMessage.postValue("Pure E2E Mode Active (No plan.csv required)")
-        }
+        // 常に Pure E2E Mode として動作（plan.csv に依存せず、現在カメラ画像のみで飛行）
+        isPureE2EMode = true
+        plan = emptyList()
+        totalPlanDistance = 0.0
+        statusMessage.postValue("Pure E2E Mode Active (No plan.csv required)")
 
         // Set image directory (Optional for Pure E2E Mode)
         val dir = context.getExternalFilesDir(null)
