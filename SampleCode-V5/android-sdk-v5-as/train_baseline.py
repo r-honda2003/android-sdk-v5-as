@@ -50,6 +50,14 @@ def parse_args():
         "--history_len", type=int, default=5,
         help="直近何ステップ分のスティック入力履歴をモデルに与えるか。デフォルト5(約1秒分、200ms間隔想定)",
     )
+    parser.add_argument(
+        "--exclude_sessions", type=int, nargs="+", default=[],
+        help="学習・検証から除外する session_id (例: --exclude_sessions 3)",
+    )
+    parser.add_argument(
+        "--use_sessions", type=int, nargs="+", default=[],
+        help="学習・検証に使用する session_id のリスト (例: --use_sessions 1 2 4 5)",
+    )
     return parser.parse_args()
 
 
@@ -145,10 +153,18 @@ def load_dataset_df(telemetry_path: str, history_len: int) -> pd.DataFrame:
 def main():
     args = parse_args()
     df = load_dataset_df(args.telemetry, args.history_len)
+
+    if args.exclude_sessions:
+        print(f"除外対象のsession_id: {args.exclude_sessions}")
+        df = df[~df["session_id"].isin(args.exclude_sessions)].copy()
+    elif args.use_sessions:
+        print(f"指定された使用対象のsession_id: {args.use_sessions}")
+        df = df[df["session_id"].isin(args.use_sessions)].copy()
+
     print(f"有効サンプル数: {len(df)}")
 
     available_sessions = sorted(df["session_id"].unique())
-    print(f"検出されたsession_id: {available_sessions}")
+    print(f"学習・検証に使用するsession_id: {available_sessions}")
 
     val_session_id = args.val_session_id
     if len(available_sessions) == 1 or val_session_id == 0:

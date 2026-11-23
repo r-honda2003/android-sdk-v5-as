@@ -6,22 +6,33 @@ export BOTTLENECK_DISABLE=1
 export NUMEXPR_MAX_THREADS=1
 
 # パラメータ設定 (コマンドライン引数で上書き可能)
-# 使い方: ./run_pipeline_e2e.sh <TELEMETRY_CSV> <IMAGES_DIR> [EPOCHS]
-TELEMETRY_CSV="${1:-telemetry_20261117_190222.csv}"
-IMAGES_DIR="${2:-images_20261117_190222}"
+# 使い方: ./run_pipeline_e2e.sh [TELEMETRY_CSV] [IMAGES_DIR] [EPOCHS] [EXCLUDE_SESSIONS]
+TELEMETRY_CSV="${1:-telemetry_with_sessions.csv}"
+IMAGES_DIR="${2:-images_run1}"
 EPOCHS="${3:-10}"
-
-echo "=========================================="
-echo " Pure E2E Pipeline Execution Configuration:"
-echo "   TELEMETRY_CSV : $TELEMETRY_CSV"
-echo "   IMAGES_DIR    : $IMAGES_DIR"
-echo "   EPOCHS        : $EPOCHS"
-echo "=========================================="
+EXCLUDE_SESSIONS="${4:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# 0. 入力チェック
+# 0. 端末からの自動取得＆統合 (分割記録されたセッションの自動マージ)
+echo -e "\n[Step 0] Pulling & Merging sessions from device if available ..."
+python3 pull_and_merge_sessions.py --output_csv "$TELEMETRY_CSV" --output_img_dir "$IMAGES_DIR" || true
+
+EXCLUDE_ARG=""
+if [ -n "$EXCLUDE_SESSIONS" ]; then
+    EXCLUDE_ARG="--exclude_sessions $EXCLUDE_SESSIONS"
+fi
+
+echo "=========================================="
+echo " Pure E2E Pipeline Execution Configuration:"
+echo "   TELEMETRY_CSV    : $TELEMETRY_CSV"
+echo "   IMAGES_DIR       : $IMAGES_DIR"
+echo "   EPOCHS           : $EPOCHS"
+echo "   EXCLUDE_SESSIONS : ${EXCLUDE_SESSIONS:-None (All 1-5 sessions included)}"
+echo "=========================================="
+
+# 0.5. 入力チェック
 if [ ! -f "$TELEMETRY_CSV" ]; then
     echo -e "\n[ERROR] $TELEMETRY_CSV が存在しません。"
     echo "指定したテレメトリCSVファイル名を確認してください。"
@@ -40,7 +51,7 @@ python3 split_sessions.py --telemetry "$TELEMETRY_CSV" --output telemetry_with_s
 
 # 2. 純粋E2Eベースラインモデルの学習 (train_baseline.py)
 echo -e "\n[Step 2] Training Pure E2E Baseline Model with IMAGES_DIR=$IMAGES_DIR (epochs=$EPOCHS) ..."
-python3 train_baseline.py --telemetry telemetry_with_sessions.csv --images_dir "$IMAGES_DIR" --output_model baseline_model.pt --epochs "$EPOCHS"
+python3 train_baseline.py --telemetry telemetry_with_sessions.csv --images_dir "$IMAGES_DIR" --output_model baseline_model.pt --epochs "$EPOCHS" $EXCLUDE_ARG
 
 # 3. PyTorch Mobile (TorchScript) 形式へのエクスポート & アセットコピー
 ASSET_DIR="../android-sdk-v5-sample/src/main/assets"
@@ -65,10 +76,12 @@ fi
 
 # 4. アプリビルド ＆ デバイスインストール
 echo -e "\n[Step 4] Building and Installing Android App..."
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-cd "$PROJECT_ROOT"
 if [ -x "./gradlew" ]; then
-    ./gradlew sample:installDebug
+    ./gradlew sample:assembleDebug
+    if [ -f "../android-sdk-v5-sample/build/outputs/apk/debug/sample-debug.apk" ]; then
+        echo "Installing APK via adb..."
+        adb install -r ../android-sdk-v5-sample/build/outputs/apk/debug/sample-debug.apk
+    fi
 fi
 
 echo -e "\n=========================================="

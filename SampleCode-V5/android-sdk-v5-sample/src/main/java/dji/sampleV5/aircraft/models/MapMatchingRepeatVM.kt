@@ -125,7 +125,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
         if (context != null) {
             ImageLogger.startCapturing(context)
             if (logFileDir == null) {
-                initAutoPilot(context, "images_20261117_190222")
+                initAutoPilot(context, "images_run1")
             }
         }
         isAutoPilotRunning = true

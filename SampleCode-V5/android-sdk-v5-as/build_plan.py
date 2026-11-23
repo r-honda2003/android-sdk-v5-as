@@ -47,6 +47,28 @@ def parse_args():
     return parser.parse_args()
 
 
+def trim_leading_stall(valid: pd.DataFrame, stick_th: int = 10) -> pd.DataFrame:
+    """先頭から連続するスティック中立(操作なし)区間を除外する。
+    教示開始直後に離陸待ちや静止している区間をPlanから省き、
+    スティック操作(前進等)が始まった瞬間からPlanを開始させる。
+    """
+    sl_v = valid["stick_left_v"].abs().to_numpy() if "stick_left_v" in valid.columns else [0] * len(valid)
+    sl_h = valid["stick_left_h"].abs().to_numpy() if "stick_left_h" in valid.columns else [0] * len(valid)
+    sr_v = valid["stick_right_v"].abs().to_numpy() if "stick_right_v" in valid.columns else [0] * len(valid)
+    sr_h = valid["stick_right_h"].abs().to_numpy() if "stick_right_h" in valid.columns else [0] * len(valid)
+
+    first_action_idx = 0
+    for i in range(len(valid)):
+        if sl_v[i] >= stick_th or sl_h[i] >= stick_th or sr_v[i] >= stick_th or sr_h[i] >= stick_th:
+            first_action_idx = i
+            break
+
+    if first_action_idx > 0:
+        print(f"先頭の操作なし待機区間 (行 0〜{first_action_idx - 1}) をPlanから除外しました。")
+        return valid.iloc[first_action_idx:].reset_index(drop=True)
+    return valid
+
+
 def trim_trailing_stall(valid: pd.DataFrame, stall_speed_mps: float, trailing_stall_min_s: float) -> pd.DataFrame:
     """末尾から連続する低速区間を検出し、それより前で打ち切る。"""
     vx = valid["vx"].to_numpy()
@@ -83,7 +105,8 @@ def build_plan(df: pd.DataFrame, interval_ms: int, stall_speed_mps: float, trail
     if len(valid) == 0:
         raise ValueError("image_pathが有効な行が1件もありません。")
 
-    # NEW: 末尾の停止区間を打ち切る
+    # NEW: 先頭の操作なし待機区間を除外し、末尾の停止区間を打ち切る
+    valid = trim_leading_stall(valid)
     valid = trim_trailing_stall(valid, stall_speed_mps, trailing_stall_min_s)
 
     # 2. 相対変位の累積計算 (全有効行に対して、区間ごとの速度×dtを積算)

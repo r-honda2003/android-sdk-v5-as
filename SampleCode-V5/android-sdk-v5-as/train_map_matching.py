@@ -39,6 +39,14 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--val_session_id", type=int, default=-1)
     parser.add_argument("--history_len", type=int, default=5)
+    parser.add_argument(
+        "--exclude_sessions", type=int, nargs="+", default=[],
+        help="学習・検証から除外する session_id (例: --exclude_sessions 3)",
+    )
+    parser.add_argument(
+        "--use_sessions", type=int, nargs="+", default=[],
+        help="学習・検証に使用する session_id のリスト (例: --use_sessions 1 2 4 5)",
+    )
     return parser.parse_args()
 
 
@@ -133,15 +141,33 @@ def load_dataset_df(telemetry_path: str, history_len: int) -> pd.DataFrame:
 def main():
     args = parse_args()
     df = load_dataset_df(args.telemetry, args.history_len)
+
+    if args.exclude_sessions:
+        print(f"除外対象のsession_id: {args.exclude_sessions}")
+        df = df[~df["session_id"].isin(args.exclude_sessions)].copy()
+    elif args.use_sessions:
+        print(f"指定された使用対象のsession_id: {args.use_sessions}")
+        df = df[df["session_id"].isin(args.use_sessions)].copy()
+
     print(f"有効サンプル数: {len(df)}")
 
     available_sessions = sorted(df["session_id"].unique())
+    print(f"学習・検証に使用するsession_id: {available_sessions}")
     val_session_id = args.val_session_id
-    if val_session_id == -1:
-        val_session_id = max(available_sessions)
+    if len(available_sessions) == 1 or val_session_id == 0:
+        train_df = df.copy().reset_index(drop=True)
+        val_df = df.copy().reset_index(drop=True)
+        print(f"単一セッションデータのため全 {len(train_df)} 枚を学習・検証に使用します")
+    else:
+        if val_session_id == -1:
+            val_session_id = max(available_sessions)
+        if val_session_id not in available_sessions:
+            raise ValueError(f"session_id {val_session_id} はデータ内に存在しません。available: {available_sessions}")
 
-    train_df = df[df["session_id"] != val_session_id].reset_index(drop=True)
-    val_df = df[df["session_id"] == val_session_id].reset_index(drop=True)
+        train_df = df[df["session_id"] != val_session_id].reset_index(drop=True)
+        val_df = df[df["session_id"] == val_session_id].reset_index(drop=True)
+        print(f"train sessions: {[s for s in available_sessions if s != val_session_id]} ({len(train_df)}枚)")
+        print(f"val session: {val_session_id} ({len(val_df)}枚)")
 
     transform = transforms.Compose([
         transforms.Resize((224, 224)),

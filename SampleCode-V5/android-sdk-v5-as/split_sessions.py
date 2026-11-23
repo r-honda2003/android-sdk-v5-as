@@ -85,6 +85,11 @@ def main():
     df = pd.read_csv(args.telemetry)
     print(f"telemetry総行数: {len(df)}")
 
+    if "session_id" in df.columns and len(df["session_id"].unique()) > 1:
+        print(f"入力CSVに明示的な session_id ({sorted(df['session_id'].unique())}) が定義されているため、再分割をスキップします。")
+        df.to_csv(args.output, index=False)
+        return
+
     df, sessions_info = detect_sessions_by_stick(
         df, args.stick_threshold, args.min_neutral_count, args.min_session_duration_s
     )

@@ -24,6 +24,8 @@ def parse_args():
     parser.add_argument("--telemetry", required=True, help="Path to telemetry_with_sessions.csv")
     parser.add_argument("--ref_session_id", type=int, default=1, help="基準とするセッションID(地図として使うもの)")
     parser.add_argument("--output", default="matched_telemetry.csv", help="出力CSVパス")
+    parser.add_argument("--exclude_sessions", type=int, nargs="+", default=[], help="除外する session_id (例: --exclude_sessions 3)")
+    parser.add_argument("--use_sessions", type=int, nargs="+", default=[], help="使用する session_id (例: --use_sessions 1 2 4 5)")
     return parser.parse_args()
 
 def calculate_progress(df_session):
@@ -59,6 +61,13 @@ def main():
     # 有効な行のみ抽出
     df = df[df["image_path"].notna() & (df["image_path"].astype(str).str.strip() != "")].copy()
     df = df[df["session_id"] != 0].copy()
+
+    if args.exclude_sessions:
+        print(f"除外対象のsession_id: {args.exclude_sessions}")
+        df = df[~df["session_id"].isin(args.exclude_sessions)].copy()
+    elif args.use_sessions:
+        print(f"指定された使用対象のsession_id: {args.use_sessions}")
+        df = df[df["session_id"].isin(args.use_sessions)].copy()
 
     sessions = df["session_id"].unique()
     if args.ref_session_id not in sessions:

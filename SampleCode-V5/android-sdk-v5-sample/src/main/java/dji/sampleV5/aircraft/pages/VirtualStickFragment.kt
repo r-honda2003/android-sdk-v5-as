@@ -88,7 +88,7 @@ class VirtualStickFragment : DJIFragment() {
         // バックグラウンドで非同期にモデルと地図(plan.csv)を事前読み込み（ボタン押下時のメインスレッド停止を回避）
         val appContext = requireContext().applicationContext
         java.util.concurrent.Executors.newSingleThreadExecutor().execute {
-            autoPilotVM.initAutoPilot(appContext, "images_20261117_190222")
+            autoPilotVM.initAutoPilot(appContext, "images_run1")
         }
     }
 
@@ -238,13 +238,23 @@ class VirtualStickFragment : DJIFragment() {
         binding?.btnDaggerRecordData?.setOnClickListener {
             val sessionId = "run1_session_$daggerSessionIndex"
             dji.sampleV5.aircraft.models.TelemetryLogger.startLogging(requireContext(), sessionId)
+            dji.sampleV5.aircraft.models.ImageLogger.startLogging(requireContext(), sessionId)
             ToastUtils.showToast("1回目: データ収集開始 (セッション $daggerSessionIndex/5)")
             binding?.btnDaggerRecordData?.text = "録画中 ($daggerSessionIndex/5)"
+        }
+
+        // 長押しでセッションインデックスを1にリセット
+        binding?.btnDaggerRecordData?.setOnLongClickListener {
+            daggerSessionIndex = 1
+            binding?.btnDaggerRecordData?.text = "1回目:データ収集開始(1/5)"
+            ToastUtils.showToast("セッションカウントを 1 にリセットしました")
+            true
         }
 
         // 1回目：データ収集停止
         binding?.btnDaggerStopData?.setOnClickListener {
             dji.sampleV5.aircraft.models.TelemetryLogger.stopLogging()
+            dji.sampleV5.aircraft.models.ImageLogger.stopLogging()
             ToastUtils.showToast("1回目: セッション $daggerSessionIndex/5 のデータ収集を停止しました")
             if (daggerSessionIndex < 5) {
                 daggerSessionIndex++

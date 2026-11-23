@@ -6,23 +6,34 @@ export BOTTLENECK_DISABLE=1
 export NUMEXPR_MAX_THREADS=1
 
 # パラメータ設定 (コマンドライン引数で上書き可能。デフォルト値は下記)
-TELEMETRY_CSV="${1:-telemetry_20261118_112806.csv}"
-IMAGES_DIR="${2:-images_20261118_112806}"
-REF_SESSION="${3:-3}"
+TELEMETRY_CSV="${1:-telemetry_with_sessions.csv}"
+IMAGES_DIR="${2:-images_run1}"
+REF_SESSION="${3:-1}"
 EPOCHS="${4:-10}"
-
-echo "=========================================="
-echo " Pipeline Execution Configuration:"
-echo "   TELEMETRY_CSV : $TELEMETRY_CSV"
-echo "   IMAGES_DIR    : $IMAGES_DIR"
-echo "   REF_SESSION   : $REF_SESSION"
-echo "   EPOCHS        : $EPOCHS"
-echo "=========================================="
+EXCLUDE_SESSIONS="${5:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# 0. 入力チェック
+# 0. 端末からの自動取得＆統合 (分割記録されたセッションの自動マージ)
+echo -e "\n[Step 0] Pulling & Merging sessions from device if available ..."
+python3 pull_and_merge_sessions.py --output_csv "$TELEMETRY_CSV" --output_img_dir "$IMAGES_DIR" || true
+
+EXCLUDE_ARG=""
+if [ -n "$EXCLUDE_SESSIONS" ]; then
+    EXCLUDE_ARG="--exclude_sessions $EXCLUDE_SESSIONS"
+fi
+
+echo "=========================================="
+echo " Pipeline Execution Configuration:"
+echo "   TELEMETRY_CSV    : $TELEMETRY_CSV"
+echo "   IMAGES_DIR       : $IMAGES_DIR"
+echo "   REF_SESSION      : $REF_SESSION"
+echo "   EPOCHS           : $EPOCHS"
+echo "   EXCLUDE_SESSIONS : ${EXCLUDE_SESSIONS:-None (All 1-5 sessions included)}"
+echo "=========================================="
+
+# 0.5. 入力チェック
 if [ ! -f "$TELEMETRY_CSV" ]; then
     echo -e "\n[ERROR] $TELEMETRY_CSV が存在しません。"
     echo "指定したテレメトリCSVファイル名を確認してください。"
@@ -41,7 +52,7 @@ python3 split_sessions.py --telemetry "$TELEMETRY_CSV" --output telemetry_with_s
 
 # 2. セッションマッチング (match_sessions.py)
 echo -e "\n[Step 2] Matching sessions with REF_SESSION=$REF_SESSION ..."
-python3 match_sessions.py --telemetry telemetry_with_sessions.csv --ref_session_id "$REF_SESSION" --output matched_telemetry.csv
+python3 match_sessions.py --telemetry telemetry_with_sessions.csv --ref_session_id "$REF_SESSION" --output matched_telemetry.csv $EXCLUDE_ARG
 
 # 3. Plan構築 (build_plan.py)
 echo -e "\n[Step 3] Building plan from matched_telemetry.csv (REF_SESSION=$REF_SESSION) ..."
@@ -56,7 +67,7 @@ fi
 
 # 5. マップ照合モデルの学習 (train_map_matching.py)
 echo -e "\n[Step 5] Training map matching model with IMAGES_DIR=$IMAGES_DIR (epochs=$EPOCHS) ..."
-python3 train_map_matching.py --telemetry matched_telemetry.csv --images_dir "$IMAGES_DIR" --output_model map_matching_model.pt --epochs "$EPOCHS"
+python3 train_map_matching.py --telemetry matched_telemetry.csv --images_dir "$IMAGES_DIR" --output_model map_matching_model.pt --epochs "$EPOCHS" $EXCLUDE_ARG
 
 # 5.5. PyTorch Mobile (TorchScript) 形式へのエクスポート & アセットコピー
 if [ -f "map_matching_model.pt" ]; then
@@ -71,7 +82,11 @@ fi
 # 6. アプリビルド ＆ デバイスインストール
 echo -e "\n[Step 6] Building and Installing Android App..."
 if [ -x "./gradlew" ]; then
-    ./gradlew sample:installDebug
+    ./gradlew sample:assembleDebug
+    if [ -f "../android-sdk-v5-sample/build/outputs/apk/debug/sample-debug.apk" ]; then
+        echo "Installing APK via adb..."
+        adb install -r ../android-sdk-v5-sample/build/outputs/apk/debug/sample-debug.apk
+    fi
 fi
 
 # 7. 画像ディレクトリをAndroid端末の外部ストレージ領域へ転送 (adb push)

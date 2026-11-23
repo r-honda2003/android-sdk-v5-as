@@ -94,7 +94,7 @@ class TeachRepeatFragment : DJIFragment() {
 
         val appContext = requireContext().applicationContext
         java.util.concurrent.Executors.newSingleThreadExecutor().execute {
-            autoPilotVM.initAutoPilot(appContext, "images_20261117_190222")
+            autoPilotVM.initAutoPilot(appContext, "images_run1")
         }
     }
 
@@ -147,6 +147,7 @@ class TeachRepeatFragment : DJIFragment() {
         binding?.btnStartTeach?.setOnClickListener {
             val sessionId = "run1_session_$sessionIndex"
             TelemetryLogger.startLogging(requireContext(), sessionId)
+            dji.sampleV5.aircraft.models.ImageLogger.startLogging(requireContext(), sessionId)
             isTeachRecording = true
             binding?.tvTeachStatus?.text = "Teach Recording: Running (Session $sessionIndex/5)\nData saving to: $sessionId"
             ToastUtils.showToast("Teach Mode 録画開始 (Session $sessionIndex/5)")
@@ -154,6 +155,7 @@ class TeachRepeatFragment : DJIFragment() {
 
         binding?.btnStopTeach?.setOnClickListener {
             TelemetryLogger.stopLogging()
+            dji.sampleV5.aircraft.models.ImageLogger.stopLogging()
             isTeachRecording = false
             ToastUtils.showToast("Teach Mode 録画停止 (Session $sessionIndex/5)")
             if (sessionIndex < 5) {
