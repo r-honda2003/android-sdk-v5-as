@@ -60,7 +60,10 @@ class MapMatchingRepeatVM : DJIViewModel() {
 
     private var logFileDir: File? = null
     private var logFileWriter: java.io.FileWriter? = null
+    private var lastImgFetchTimeMs: Long = 0L
+    private var lastPreprocTimeMs: Long = 0L
     private var lastInferenceTimeMs: Long = 0L
+    private var lastCmdSendTimeMs: Long = 0L
 
     var pcServerIp: String = "192.168.12.60"
     var isPcInferenceMode: Boolean = true
@@ -119,7 +122,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
             val sessionId = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
             val logFile = File(logFileDir, "autopilot_exec_$sessionId.csv")
             logFileWriter = java.io.FileWriter(logFile, true).apply {
-                appendLine("timestamp,cum_distance_m,pred_lv,pred_lh,pred_rv,pred_rh,send_lv,send_lh,send_rv,send_rh,inference_time_ms,total_loop_time_ms,ref_image_path,pitch,roll,yaw")
+                appendLine("timestamp,cum_distance_m,pred_lv,pred_lh,pred_rv,pred_rh,send_lv,send_lh,send_rv,send_rh,t_img_fetch_ms,t_preproc_ms,inference_time_ms,t_cmd_send_ms,total_loop_time_ms,ref_image_path,pitch,roll,yaw,human_override")
                 flush()
             }
             Log.d(TAG, "AutoPilot CSV logger started: ${logFile.absolutePath}")
@@ -159,6 +162,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
         handlerThread?.quitSafely()
         handlerThread = null
         ImageLogger.stopCapturing()
+        TelemetryLogger.clearAutoPilotState()
         VirtualStickManager.getInstance().leftStick.horizontalPosition = 0
         VirtualStickManager.getInstance().leftStick.verticalPosition = 0
         VirtualStickManager.getInstance().rightStick.horizontalPosition = 0
@@ -203,8 +207,11 @@ class MapMatchingRepeatVM : DJIViewModel() {
                     statusMessage.postValue("Ref img missing: ${refEntry.imagePath}")
                 }
 
-                // 3. Get current image
+                // 3. Get current image (画像取得時間を計測)
+                val imgFetchStart = System.currentTimeMillis()
                 val currBitmap = getCurrentImageAsBitmap()
+                lastImgFetchTimeMs = System.currentTimeMillis() - imgFetchStart
+
                 if (currBitmap == null) {
                     statusMessage.postValue("⚠️ カメラ画像待機中 (ImageLogger未受信)")
                 }
@@ -217,10 +224,12 @@ class MapMatchingRepeatVM : DJIViewModel() {
                         runInference(currBitmap, refBitmap)
                     } else {
                         lastInferenceTimeMs = 0L
+                        lastPreprocTimeMs = 0L
                         intArrayOf(0, 0, 0, 0)
                     }
                 } else {
                     lastInferenceTimeMs = 0L
+                    lastPreprocTimeMs = 0L
                     intArrayOf(0, 0, 0, 0)
                 }
 
@@ -261,32 +270,9 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 val sendRH = if (isHumanOverriding) rcRightH else aiSendRH
 
                 predictedSticks.postValue(if (isHumanOverriding) intArrayOf(rcLeftV, rcLeftH, rcRightV, rcRightH) else rawSticks)
-                val totalLoopTimeMs = System.currentTimeMillis() - loopStartTime
 
-                val percentStr = if (totalPlanDistance > 0) {
-                    val pct = (currentCumDistance / totalPlanDistance * 100.0).coerceIn(0.0, 100.0)
-                    "Progress: ${String.format(java.util.Locale.US, "%.0f", pct)}% (${String.format(java.util.Locale.US, "%.1f", currentCumDistance)}m / ${String.format(java.util.Locale.US, "%.1f", totalPlanDistance)}m)"
-                } else {
-                    "Dist: ${String.format(java.util.Locale.US, "%.1f", currentCumDistance)}m"
-                }
-
-                val overrideStatusTag = if (isHumanOverriding) "⚠️【人間介入中 (RC Override)】" else "🤖【完全E2E AI自動飛行中】"
-
-                statusMessage.postValue(
-                    "$overrideStatusTag " +
-                    (if (isPcInferenceMode) "[PC Inference] " else "[Local Inference] ") +
-                    (if (isPureE2EMode) "Pure E2E Active" else "AutoPilot Active") +
-                    " | " + percentStr + "\n" +
-                    "【送信命令(Stick)】LV:$sendLV LH:$finalLH RV:$sendRV RH:$sendRH\n" +
-                    (if (isPcInferenceMode) "[PC Inference] " else "[Local Inference] ") +
-                    (if (isPureE2EMode) "Pure E2E Active" else "AutoPilot Active") +
-                    " | " + percentStr + "\n" +
-                    "【送信命令(Stick)】LV:$sendLV LH:$finalLH RV:$sendRV RH:$sendRH\n" +
-                    "【処理速度】Infer:${lastInferenceTimeMs}ms | Loop:${totalLoopTimeMs}ms (PC Server: $pcServerIp)\n" +
-                    "【実機レスポンス】Pitch:${String.format(java.util.Locale.US, "%.1f", attitude?.pitch ?: 0.0)}° | YawDiff:${String.format(java.util.Locale.US, "%.1f", yawDiff)}°"
-                )
-
-                // 6. ドローンへスティック値およびフライトコントローラ高度制御パラメータを直接送信
+                // 6. ドローンへスティック値およびフライトコントローラ高度制御パラメータを直接送信 (送信時間を計測)
+                val cmdSendStart = System.currentTimeMillis()
                 try {
                     VirtualStickManager.getInstance().leftStick.verticalPosition = sendLV
                     VirtualStickManager.getInstance().leftStick.horizontalPosition = finalLH
@@ -308,15 +294,53 @@ class MapMatchingRepeatVM : DJIViewModel() {
                 } catch (e: Throwable) {
                     Log.e(TAG, "Failed to send stick positions: ${e.message}")
                 }
+                lastCmdSendTimeMs = System.currentTimeMillis() - cmdSendStart
 
-                // 7. CSVログへの即時保存 (AI推論値, 送信スティック値[-660~660], 推論時間ms, ループ処理時間ms, 人間介入フラグ)
+                val totalLoopTimeMs = System.currentTimeMillis() - loopStartTime
+
+                val percentStr = if (totalPlanDistance > 0) {
+                    val pct = (currentCumDistance / totalPlanDistance * 100.0).coerceIn(0.0, 100.0)
+                    "Progress: ${String.format(java.util.Locale.US, "%.0f", pct)}% (${String.format(java.util.Locale.US, "%.1f", currentCumDistance)}m / ${String.format(java.util.Locale.US, "%.1f", totalPlanDistance)}m)"
+                } else {
+                    "Dist: ${String.format(java.util.Locale.US, "%.1f", currentCumDistance)}m"
+                }
+
+                val overrideStatusTag = if (isHumanOverriding) "⚠️【人間介入中 (RC Override)】" else "🤖【完全E2E AI自動飛行中】"
+
+                statusMessage.postValue(
+                    "$overrideStatusTag " +
+                    (if (isPcInferenceMode) "[PC Inference] " else "[Local Inference] ") +
+                    (if (isPureE2EMode) "Pure E2E Active" else "AutoPilot Active") + " | " + percentStr + "\n" +
+                    "【送信命令(Stick)】LV:$sendLV LH:$finalLH RV:$sendRV RH:$sendRH\n" +
+                    "【処理時間 Breakdown】\n" +
+                    " ├ 画像取得: ${lastImgFetchTimeMs}ms | 前処理: ${lastPreprocTimeMs}ms\n" +
+                    " ├ AI推論: ${lastInferenceTimeMs}ms | 指令送信: ${lastCmdSendTimeMs}ms\n" +
+                    " └ 1サイクル合計: ${totalLoopTimeMs}ms (PC: $pcServerIp)\n" +
+                    "【実機レスポンス】Pitch:${String.format(java.util.Locale.US, "%.1f", attitude?.pitch ?: 0.0)}° | YawDiff:${String.format(java.util.Locale.US, "%.1f", yawDiff)}°"
+                )
+
+                // 7. TelemetryLogger へ AutoPilot のリアルタイムデータを同期 & CSVログへの即時保存
+                TelemetryLogger.isHumanOverrideActive = isHumanOverriding
+                TelemetryLogger.updateAutoPilotState(
+                    sendLV = sendLV,
+                    sendLH = finalLH,
+                    sendRV = sendRV,
+                    sendRH = sendRH,
+                    imgFetchTimeMs = lastImgFetchTimeMs,
+                    preprocTimeMs = lastPreprocTimeMs,
+                    inferenceTimeMs = lastInferenceTimeMs,
+                    cmdSendTimeMs = lastCmdSendTimeMs,
+                    loopTimeMs = totalLoopTimeMs
+                )
+
                 try {
                     val overrideVal = if (isHumanOverriding) 1 else 0
+                    val datetimeStr = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.getDefault()).format(java.util.Date(now))
                     logFileWriter?.appendLine(
-                        "$now,${String.format(java.util.Locale.US, "%.2f", currentCumDistance)}," +
+                        "$datetimeStr,${String.format(java.util.Locale.US, "%.2f", currentCumDistance)}," +
                         "${rawSticks[0]},${rawSticks[1]},${rawSticks[2]},${rawSticks[3]}," +
                         "$sendLV,$finalLH,$sendRV,$sendRH," +
-                        "$lastInferenceTimeMs,$totalLoopTimeMs,${refEntry?.imagePath ?: ""}," +
+                        "$lastImgFetchTimeMs,$lastPreprocTimeMs,$lastInferenceTimeMs,$lastCmdSendTimeMs,$totalLoopTimeMs,${refEntry?.imagePath ?: ""}," +
                         "${attitude?.pitch ?: 0.0},${attitude?.roll ?: 0.0},${attitude?.yaw ?: 0.0},$overrideVal"
                     )
                     logFileWriter?.flush()
@@ -382,22 +406,25 @@ class MapMatchingRepeatVM : DJIViewModel() {
     }
 
     private fun runInferenceOnPc(curr: Bitmap, ref: Bitmap?): IntArray {
+        val preprocStart = System.currentTimeMillis()
+        val resized = Bitmap.createScaledBitmap(curr, 224, 224, true)
+        val baos = ByteArrayOutputStream()
+        resized.compress(Bitmap.CompressFormat.JPEG, 85, baos)
+        val currJpeg = baos.toByteArray()
+        if (resized != curr) resized.recycle()
+
+        val refJpeg = if (ref != null && !isPureE2EMode) {
+            val refResized = Bitmap.createScaledBitmap(ref, 224, 224, true)
+            val refBaos = ByteArrayOutputStream()
+            refResized.compress(Bitmap.CompressFormat.JPEG, 85, refBaos)
+            val bytes = refBaos.toByteArray()
+            if (refResized != ref) refResized.recycle()
+            bytes
+        } else null
+        lastPreprocTimeMs = System.currentTimeMillis() - preprocStart
+
         val startInference = System.currentTimeMillis()
         return try {
-            val resized = Bitmap.createScaledBitmap(curr, 224, 224, true)
-            val baos = ByteArrayOutputStream()
-            resized.compress(Bitmap.CompressFormat.JPEG, 85, baos)
-            val currJpeg = baos.toByteArray()
-            if (resized != curr) resized.recycle()
-
-            val refJpeg = if (ref != null && !isPureE2EMode) {
-                val refResized = Bitmap.createScaledBitmap(ref, 224, 224, true)
-                val refBaos = ByteArrayOutputStream()
-                refResized.compress(Bitmap.CompressFormat.JPEG, 85, refBaos)
-                val bytes = refBaos.toByteArray()
-                if (refResized != ref) refResized.recycle()
-                bytes
-            } else null
 
             val cleanHost = pcServerIp.trim().removePrefix("http://").removeSuffix("/")
             val targetUrl = if (cleanHost.contains(":")) "http://$cleanHost/predict" else "http://$cleanHost:5000/predict"
@@ -460,11 +487,13 @@ class MapMatchingRepeatVM : DJIViewModel() {
     }
 
     private fun runInference(curr: Bitmap, ref: Bitmap?): IntArray {
+        val preprocStart = System.currentTimeMillis()
+        val currTensor = bitmapToTensor(curr)
+        val refTensor = if (ref != null && !isPureE2EMode) bitmapToTensor(ref) else null
+        lastPreprocTimeMs = System.currentTimeMillis() - preprocStart
+
         val startInference = System.currentTimeMillis()
         val result = try {
-            // Preprocess
-            val currTensor = bitmapToTensor(curr)
-            
             // History tensor [1, HISTORY_LEN * 4]
             val histData = FloatArray(HISTORY_LEN * 4)
             for (i in 0 until HISTORY_LEN) {
@@ -477,8 +506,7 @@ class MapMatchingRepeatVM : DJIViewModel() {
             val histTensor = Tensor.fromBlob(histData, longArrayOf(1, (HISTORY_LEN * 4).toLong()))
 
             // Forward: If ref is present and not pure E2E, use 2-image MapMatching policy. Otherwise 1-image Baseline E2E policy.
-            val output = if (ref != null && !isPureE2EMode) {
-                val refTensor = bitmapToTensor(ref)
+            val output = if (refTensor != null) {
                 model?.forward(
                     IValue.from(currTensor),
                     IValue.from(refTensor),

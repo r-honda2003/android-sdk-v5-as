@@ -42,8 +42,63 @@ object TelemetryLogger {
     @Volatile
     var isHumanOverrideActive: Boolean = false
 
+    // AutoPilot / AI 飛行時の制御値・推論時間データ保持用
+    @Volatile
+    private var autoPilotSendLV: Int? = null
+    @Volatile
+    private var autoPilotSendLH: Int? = null
+    @Volatile
+    private var autoPilotSendRV: Int? = null
+    @Volatile
+    private var autoPilotSendRH: Int? = null
+    @Volatile
+    private var autoPilotImgFetchMs: Long = 0L
+    @Volatile
+    private var autoPilotPreprocMs: Long = 0L
+    @Volatile
+    private var autoPilotAiTotalMs: Long = 0L
+    @Volatile
+    private var autoPilotCmdSendMs: Long = 0L
+    @Volatile
+    private var autoPilotTurnaroundMs: Long = 0L
+
+    fun updateAutoPilotState(
+        sendLV: Int,
+        sendLH: Int,
+        sendRV: Int,
+        sendRH: Int,
+        imgFetchTimeMs: Long,
+        preprocTimeMs: Long,
+        inferenceTimeMs: Long,
+        cmdSendTimeMs: Long,
+        loopTimeMs: Long
+    ) {
+        autoPilotSendLV = sendLV
+        autoPilotSendLH = sendLH
+        autoPilotSendRV = sendRV
+        autoPilotSendRH = sendRH
+        autoPilotImgFetchMs = imgFetchTimeMs
+        autoPilotPreprocMs = preprocTimeMs
+        autoPilotAiTotalMs = inferenceTimeMs
+        autoPilotCmdSendMs = cmdSendTimeMs
+        autoPilotTurnaroundMs = loopTimeMs
+    }
+
+    fun clearAutoPilotState() {
+        autoPilotSendLV = null
+        autoPilotSendLH = null
+        autoPilotSendRV = null
+        autoPilotSendRH = null
+        autoPilotImgFetchMs = 0L
+        autoPilotPreprocMs = 0L
+        autoPilotAiTotalMs = 0L
+        autoPilotCmdSendMs = 0L
+        autoPilotTurnaroundMs = 0L
+    }
+
     private var lastYaw: Double? = null
     private var lastTimestamp: Long? = null
+    private var frameCounter: Long = 0
 
     private val listenerId = this
 
@@ -56,12 +111,13 @@ object TelemetryLogger {
 
         lastYaw = null
         lastTimestamp = null
+        frameCounter = 0
 
         val dir = context.getExternalFilesDir(null)
         val fileName = "telemetry_$sessionId.csv"
         val file = File(dir, fileName)
         fileWriter = FileWriter(file, true)
-        fileWriter?.appendLine("time,image_path,vx,vy,vz,pitch,roll,yaw,lat,lng,alt,gps_signal,battery_percent,stick_left_v,stick_left_h,stick_right_v,stick_right_h,calc_stick_left_v,calc_stick_left_h,calc_stick_right_v,calc_stick_right_h,send_stick_left_v,send_stick_left_h,send_stick_right_v,send_stick_right_h,human_override_active")
+        fileWriter?.appendLine("timestamp,frame_id,version_note,wp_idx,total_wp,target_alt_m,repeat_image_name,image_size_kb,total_chunks,sp_kpts_curr,sp_kpts_teach,lg_matches,match_ratio_pct,inliers_cnt,inlier_ratio_pct,mean_match_score,pixel_error_px,t_img_recv_ms,t_sp_ms,t_lg_ms,t_depth_ms,t_ai_total_ms,t_cmd_send_ms,t_turnaround_ms,fps,network_mbps,network_kb_s,jitter_ms,cmd_vx,cmd_vy,cmd_vz,cmd_yaw_rate,cmd_pitch_660,cmd_roll_660,cmd_throttle_660,cmd_yaw_660,drone_pitch,drone_roll,drone_yaw,drone_alt_m,est_x_m,est_y_m,est_z_m,cpu_pct,gpu_pct,gpu_power_w,vram_mb,lat,lng,gps_signal,battery_percent,vx,vy,vz,stick_left_v,stick_left_h,stick_right_v,stick_right_h,human_override_active,calc_stick_left_v,calc_stick_left_h,calc_stick_right_v,calc_stick_right_h")
 
         subscribeKeys()
         startPeriodicWrite()
@@ -71,6 +127,7 @@ object TelemetryLogger {
         if (!isRecording) return
         isRecording = false
         isHumanOverrideActive = false
+        clearAutoPilotState()
         handler?.removeCallbacksAndMessages(null)
         unsubscribeKeys()
         fileWriter?.flush()
@@ -208,15 +265,29 @@ object TelemetryLogger {
                 val calcStickRH = ((vy / maxVxy) * 660.0).toInt().coerceIn(-660, 660)
 
                 // 5. V~Y列 (send_stick_*): ドローンへ実際に送信される制御値 (-660~660)
-                val sendStickLV = if (stickLV != 0) stickLV else calcStickLV
-                val sendStickLH = if (stickLH != 0) stickLH else calcStickLH
-                val sendStickRV = if (stickRV != 0) stickRV else calcStickRV
-                val sendStickRH = if (stickRH != 0) stickRH else calcStickRH
+                val sendStickLV = autoPilotSendLV ?: (if (stickLV != 0) stickLV else calcStickLV)
+                val sendStickLH = autoPilotSendLH ?: (if (stickLH != 0) stickLH else calcStickLH)
+                val sendStickRV = autoPilotSendRV ?: (if (stickRV != 0) stickRV else calcStickRV)
+                val sendStickRH = autoPilotSendRH ?: (if (stickRH != 0) stickRH else calcStickRH)
 
                 val overrideFlag = if (isHumanOverrideActive) 1 else 0
+                frameCounter++
 
+                val datetimeStr = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.getDefault()).format(java.util.Date(now))
+                val targetAltStr = String.format(java.util.Locale.US, "%.2f", alt)
+                val pitchStr = String.format(java.util.Locale.US, "%.2f", pitch)
+                val rollStr = String.format(java.util.Locale.US, "%.2f", roll)
+                val yawStr = String.format(java.util.Locale.US, "%.2f", yaw)
+
+                val tImgRecvStr = String.format(java.util.Locale.US, "%.1f", autoPilotImgFetchMs.toDouble())
+                val tSpStr = String.format(java.util.Locale.US, "%.1f", autoPilotPreprocMs.toDouble())
+                val tAiTotalStr = String.format(java.util.Locale.US, "%.1f", autoPilotAiTotalMs.toDouble())
+                val tCmdSendStr = String.format(java.util.Locale.US, "%.1f", autoPilotCmdSendMs.toDouble())
+                val tTurnaroundStr = String.format(java.util.Locale.US, "%.1f", autoPilotTurnaroundMs.toDouble())
+
+                // Unified CSV 63-column layout (47 standard + 16 extra telemetry fields)
                 fileWriter?.appendLine(
-                    "$now,$imagePath,$vx,$vy,$vz,$pitch,$roll,$yaw,$lat,$lng,$alt,$gps,$battery,$stickLV,$stickLH,$stickRV,$stickRH,$calcStickLV,$calcStickLH,$calcStickRV,$calcStickRH,$sendStickLV,$sendStickLH,$sendStickRV,$sendStickRH,$overrideFlag"
+                    "$datetimeStr,$frameCounter,v5_sample,0,0,$targetAltStr,$imagePath,0.0,0,0,0,0,0.0,0,0.0,0.0,0.0,$tImgRecvStr,$tSpStr,0.0,0.0,$tAiTotalStr,$tCmdSendStr,$tTurnaroundStr,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,$sendStickRV,$sendStickRH,$sendStickLV,$sendStickLH,$pitchStr,$rollStr,$yawStr,$targetAltStr,0.0,0.0,0.0,0.0,0.0,0.0,0.0,$lat,$lng,$gps,$battery,$vx,$vy,$vz,$stickLV,$stickLH,$stickRV,$stickRH,$overrideFlag,$calcStickLV,$calcStickLH,$calcStickRV,$calcStickRH"
                 )
                 fileWriter?.flush()
 
