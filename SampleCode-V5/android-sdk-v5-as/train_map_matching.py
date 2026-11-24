@@ -47,6 +47,26 @@ def parse_args():
         "--use_sessions", type=int, nargs="+", default=[],
         help="学習・検証に使用する session_id のリスト (例: --use_sessions 1 2 4 5)",
     )
+    parser.add_argument(
+        "--only_interventions", action="store_true", default=True,
+        help="HG-DAgGER/Selective Experience Replay: 2回目以降のAI飛行セッションで人間が介入した瞬間(+前後ウィンドウ)のみを抽出して学習に利用する (デフォルト: True)",
+    )
+    parser.add_argument(
+        "--no_only_interventions", action="store_false", dest="only_interventions",
+        help="人間介入フィルタリングを無効化し、AI飛行セッションの全フレームを学習に利用する",
+    )
+    parser.add_argument(
+        "--window_before", type=int, default=5,
+        help="人間介入発生直前の何ステップ(フレーム)を学習データに含めるか (デフォルト: 5 = 約1秒前)",
+    )
+    parser.add_argument(
+        "--window_after", type=int, default=5,
+        help="人間介入終了直後の何ステップ(フレーム)を学習データに含めるか (デフォルト: 5 = 約1秒後)",
+    )
+    parser.add_argument(
+        "--base_session_id", type=int, default=1,
+        help="全フレームを無条件保持する初期手動教示セッションのID (デフォルト: 1)",
+    )
     return parser.parse_args()
 
 
@@ -130,6 +150,73 @@ class MapMatchingPolicy(nn.Module):
         return self.head(combined)
 
 
+def filter_human_interventions(
+    df: pd.DataFrame,
+    window_before: int = 5,
+    window_after: int = 5,
+    base_session_id: int = 1
+) -> pd.DataFrame:
+    """
+    HG-DAgGER / Selective Experience Replay:
+    - 初期手動教示セッション (session_id == base_session_id) は全データ保持
+    - 以降のAI飛行セッション (session_id != base_session_id) は、
+      human_override_active == 1 (またはプロポ手動入力あり) のフレームおよびその前後 (window_before, window_after) のみを抽出
+    """
+    if df.empty:
+        return df
+
+    filtered_dfs = []
+    print("\n--- [HG-DAgGER / Selective Experience Replay フィルタリング開始] ---")
+
+    for session_id, group in df.groupby("session_id", sort=True):
+        if session_id == base_session_id:
+            print(f"  Session {session_id} (初期教示データ): 全 {len(group)} 行を保持")
+            filtered_dfs.append(group)
+        else:
+            # 1) human_override_active == 1 フラグチェック
+            is_override = pd.Series(False, index=group.index)
+            if "human_override_active" in group.columns:
+                is_override = is_override | (group["human_override_active"] == 1)
+
+            # 2) プロポ手動スティック入力の閾値チェック (|stick| > 50)
+            for col in STICK_COLS:
+                if col in group.columns:
+                    is_override = is_override | (group[col].abs() > 50)
+
+            override_count = is_override.sum()
+            if override_count == 0:
+                print(f"  Session {session_id} (AI飛行): 人間介入なしのためスキップ (0/{len(group)} 行)")
+                continue
+
+            # 介入フレームとその前後 (window_before, window_after) のインデックスを収集
+            group_indices = group.index.tolist()
+            idx_to_pos = {idx: pos for pos, idx in enumerate(group_indices)}
+            selected_indices = set()
+
+            for override_idx in group.index[is_override]:
+                pos = idx_to_pos[override_idx]
+                start_pos = max(0, pos - window_before)
+                end_pos = min(len(group_indices) - 1, pos + window_after)
+                for p in range(start_pos, end_pos + 1):
+                    selected_indices.add(group_indices[p])
+
+            selected_df = group.loc[sorted(list(selected_indices))].copy()
+            print(
+                f"  Session {session_id} (AI飛行+介入): 全 {len(group)} 行中 "
+                f"{len(selected_df)} 行を抽出 (直接介入: {override_count} 行 + 前後ウィンドウ)"
+            )
+            filtered_dfs.append(selected_df)
+
+    if not filtered_dfs:
+        print("[Warning] フィルタリング後のデータが0件のため、全データを保持します。")
+        return df
+
+    res_df = pd.concat(filtered_dfs).sort_values(["session_id", "time"]).reset_index(drop=True)
+    print(f"HG-DAgGER 抽出完了: 全体 {len(df)} 行 -> {len(res_df)} 行へ縮小")
+    print("-----------------------------------------------------------\n")
+    return res_df
+
+
 def load_dataset_df(telemetry_path: str, history_len: int) -> pd.DataFrame:
     df = pd.read_csv(telemetry_path)
     if "ref_image_path" not in df.columns:
@@ -141,6 +228,14 @@ def load_dataset_df(telemetry_path: str, history_len: int) -> pd.DataFrame:
 def main():
     args = parse_args()
     df = load_dataset_df(args.telemetry, args.history_len)
+
+    if args.only_interventions:
+        df = filter_human_interventions(
+            df,
+            window_before=args.window_before,
+            window_after=args.window_after,
+            base_session_id=args.base_session_id
+        )
 
     if args.exclude_sessions:
         print(f"除外対象のsession_id: {args.exclude_sessions}")
